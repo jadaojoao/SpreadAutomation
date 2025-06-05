@@ -1,0 +1,6 @@
+*.xlsx
+*.xlsm
+*.xlsb
+ITRs DFPs non-CVM/
+ITRs DFPs CVM/
+Spreads Tests/
