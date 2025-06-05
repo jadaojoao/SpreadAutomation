@@ -5,6 +5,8 @@
 # • Cabeçalhos corretos para ano × trimestre
 # • DRE trimestral: linhas mapeadas manualmente
 # • Atualiza planilha ABERTA via xlwings; fallback openpyxl
+# pip install openpyxl xlwings customtkinter pandas
+# pip install -U customtkinter  # se necessário
 # --------------------------------------------------------------------
 from __future__ import annotations
 
