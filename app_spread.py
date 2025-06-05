@@ -7,6 +7,7 @@
 # • Atualiza planilha ABERTA via xlwings; fallback openpyxl
 # pip install openpyxl xlwings customtkinter pandas
 # pip install -U customtkinter  # se necessário
+# test do git
 # --------------------------------------------------------------------
 from __future__ import annotations
 
