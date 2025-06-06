@@ -115,11 +115,19 @@ def prepara_origem(
         is_res = "resultado" in low
 
         def ren(col: str) -> str:
-            c = col.lower().strip()
-            # ---- cabeçalhos trimestre --------------------------------
-            if is_trim and is_ap:
-                if c.startswith(H_TRI_AP[0]):  return atual
-                if c.startswith(H_TRI_AP[1]):  return ant
+    # cria DataFrames das abas existentes --------------------------------
+    dfs: list[tuple[str, pd.DataFrame]] = []
+    for aba_orig, aba_nova in mapa.items():
+        if aba_orig in xls.sheet_names:
+            df = pd.read_excel(xls, sheet_name=aba_orig, engine=engine)
+            df = df.rename(columns=make_ren(aba_orig))
+            dfs.append((aba_nova, df))
+
+    if not dfs:
+        raise ValueError("Nenhuma aba esperada encontrada em" f" {path.name}")
+
+        for aba_nova, df in dfs:
+            df.to_excel(wr, sheet_name=aba_nova, index=False)
             elif is_trim and is_res:
                 if c.startswith(H_TRI_RES[0]): return atual
                 if c.startswith(H_TRI_RES[1]): return ant
