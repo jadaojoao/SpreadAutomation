@@ -1,4 +1,4 @@
-# app_spread.py · v1 (Com o git e code agente ChatGPT)
+# app_spread.py · v2 (Com o git e code agente ChatGPT)
 # --------------------------------------------------------------------
 # • Coluna-origem / destino por LETRA ou índice
 # • Linha inicial global  +  Linha inicial DRE (trimestre)
@@ -6,6 +6,7 @@
 # • DRE trimestral: linhas mapeadas manualmente
 # • Atualiza planilha ABERTA via xlwings; fallback openpyxl
 # • Destaca valores usados na origem tratada
+# • Depreciação/Amortização na DFC trimestral negativa
 # pip install openpyxl xlwings customtkinter pandas
 # pip install -U customtkinter  # se necessário
 # test com Python 3.10+ e xlwings >= 0.30.0
@@ -76,32 +77,34 @@ def prepara_origem(
     ant: str,
     ant2: str,
     is_trim: bool,
-    out_dir: Path | None,       # pasta destino ou None para sobrescrever
+    out_dir: Path | None,          # None  ⇒  pasta do próprio arquivo
 ) -> Path:
     """
-    Cria o arquivo *origem_tratada* (xlsx/xlsm) em `out_dir` (ou sobrescreve
-    `path` quando ``out_dir`` é ``None``) com:
-      • apenas as abas relevantes;
-      • colunas de período renomeadas (ano × trimestre).
-
-    Devolve o ``Path`` do arquivo gravado.
+    Cria <arquivo>_tratado.xlsx (ou .xlsm) sem NUNCA sobrescrever o
+    arquivo original e devolve o Path gerado.
     """
-    mapa = {
+    # ------------- definir pasta e nome de saída -------------------
+    dst_dir  = out_dir or path.parent
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    dst_path = dst_dir / f"{path.stem}_tratado{path.suffix}"
+
+    # ------------- mapeamento de abas ------------------------------
+    m = {
         "consolidado": {
-            "DF Cons Ativo": "cons ativos",
-            "DF Cons Passivo": "cons passivos",
-            "DF Cons Resultado Periodo": "cons DRE",
-            "DF Cons Fluxo de Caixa": "cons DFC",
+            "DF Cons Ativo":              "cons ativos",
+            "DF Cons Passivo":            "cons passivos",
+            "DF Cons Resultado Periodo":  "cons DRE",
+            "DF Cons Fluxo de Caixa":     "cons DFC",
         },
         "individual": {
-            "DF Ind Ativo": "ind ativos",
-            "DF Ind Passivo": "ind passivos",
-            "DF Ind Resultado Periodo": "ind DRE",
-            "DF Ind Fluxo de Caixa": "ind DFC",
+            "DF Ind Ativo":               "ind ativos",
+            "DF Ind Passivo":             "ind passivos",
+            "DF Ind Resultado Periodo":   "ind DRE",
+            "DF Ind Fluxo de Caixa":      "ind DFC",
         },
     }[tipo]
 
-    # cabeçalhos em minúsculas
+    # ------------- cabeçalhos -------------------------------------
     H_ANO      = ("valor ultimo exercicio",
                   "valor penultimo exercicio",
                   "valor antepenultimo exercicio")
@@ -110,53 +113,43 @@ def prepara_origem(
     H_TRI_RES  = ("valor acumulado atual exercicio",
                   "valor acumulado exercicio anterior")
 
-    def make_ren(sheet_orig: str) -> Callable[[str], str]:
+    def ren_factory(sheet_orig: str) -> Callable[[str], str]:
         low = sheet_orig.lower()
         is_ap  = any(k in low for k in ("ativo", "passivo"))
         is_res = "resultado" in low
-
-        def ren(col: str) -> str:
-            c = col.lower().strip()
-            # ---- cabeçalhos trimestre --------------------------------
+        def ren(c: str) -> str:
+            c_low = c.lower().strip()
             if is_trim and is_ap:
-                if c.startswith(H_TRI_AP[0]):  return atual
-                if c.startswith(H_TRI_AP[1]):  return ant
+                if c_low.startswith(H_TRI_AP[0]):  return atual
+                if c_low.startswith(H_TRI_AP[1]):  return ant
             elif is_trim and is_res:
-                if c.startswith(H_TRI_RES[0]): return atual
-                if c.startswith(H_TRI_RES[1]): return ant
-            # ---- cabeçalhos ano ---------------------------------------
-            if c.startswith(H_ANO[0]):  return atual
-            if c.startswith(H_ANO[1]):  return ant
-            if c.startswith(H_ANO[2]):  return ant2
-            return col
+                if c_low.startswith(H_TRI_RES[0]): return atual
+                if c_low.startswith(H_TRI_RES[1]): return ant
+            if c_low.startswith(H_ANO[0]):  return atual
+            if c_low.startswith(H_ANO[1]):  return ant
+            if c_low.startswith(H_ANO[2]):  return ant2
+            return c
         return ren
 
-    # --------- cria pasta destino / nomeia arquivo ------------------
-    if out_dir is not None:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_name = f"{path.stem}_tratado{path.suffix}"
-        out_path = out_dir / out_name
-    else:
-        out_path = path
-
+    # ------------- gera planilha tratada ---------------------------
     engine = "openpyxl" if path.suffix.lower() in (".xlsx", ".xlsm") else None
-    xls = pd.ExcelFile(path, engine=engine)
+    xls    = pd.ExcelFile(path, engine=engine)
 
-    abas_validas = [
-        (orig, nova) for orig, nova in mapa.items() if orig in xls.sheet_names
-    ]
-    if not abas_validas:
-        raise ValueError(
-            "Arquivo de origem não contém nenhuma das abas esperadas"
-        )
+    with pd.ExcelWriter(dst_path, engine="openpyxl") as wr:
+        for orig, novo in m.items():
+            if orig not in xls.sheet_names:
+                continue
+            df = pd.read_excel(xls, sheet_name=orig, engine=engine)
+            df = df.rename(columns=ren_factory(orig))
+            df.to_excel(wr, sheet_name=novo, index=False)
 
-    with pd.ExcelWriter(out_path, engine="openpyxl") as wr:
-        for aba_orig, aba_nova in abas_validas:
-            df = pd.read_excel(xls, sheet_name=aba_orig, engine=engine)
-            df = df.rename(columns=make_ren(aba_orig))
-            df.to_excel(wr, sheet_name=aba_nova, index=False)
+    # garantia: primeira sheet visível (openpyxl 3.1+)
+    wb = load_workbook(dst_path)
+    wb.active.sheet_state = "visible"
+    wb.save(dst_path)
 
-    return out_path
+    return dst_path
+
 
 
 
@@ -344,13 +337,18 @@ def aplicar_dre_manual(
 
 def inserir_depreciacao_dfc(
     df_dfc: pd.DataFrame,
-    sheet,
-    col_dst_1based: int,
-    linha: int,
-    col_valor: str,
+    sheet,                # xlwings.Sheet  OU  openpyxl.Worksheet
+    col_dst_1based: int,  # coluna-destino (1-based)
+    linha: int,           # linha onde colocar (ex.: 199)
+    col_valor: str,       # nome da coluna “atual” no DataFrame
     is_xlwings: bool,
 ) -> int | None:
-    """Insere na ``linha`` o valor de Depreciações/Amortizações da DFC."""
+    """
+    Lê o valor de Depreciações/Amortizações na DFC e grava SEMPRE
+    *negativo* na célula (linha, col_dst_1based).
+
+    Retorna o inteiro (negativo) gravado ou ``None`` se não encontrou.
+    """
     if df_dfc is None or col_valor not in df_dfc.columns:
         return None
 
@@ -362,15 +360,25 @@ def inserir_depreciacao_dfc(
     except Exception:
         return None
 
+    # ── garante valor negativo ─────────────────────────────────────
     num_val = normaliza_num(raw_val)
-    valor = num_val if num_val is not None else raw_val
+    if num_val is not None:
+        num_val = -abs(num_val)          # força sinal –
+        valor = num_val
+    else:
+        # string: adiciona “-” se necessário
+        s = str(raw_val).strip()
+        valor = "-" + s.lstrip("+") if not s.startswith("-") else s
+        num_val = normaliza_num(valor)
 
+    # ── grava na planilha ──────────────────────────────────────────
     if is_xlwings:
         sheet.cells(linha, col_dst_1based).value = valor
     else:
         sheet.cell(linha, col_dst_1based, value=valor)
 
     return num_val
+
 
 
 def destacar_inseridos(orig_tratada: Path,
@@ -546,10 +554,12 @@ def processar(ori: Path, spr: Path, tipo: str,
         wb.save(spr)
 
 
-    destacar_inseridos(orig_tratada, used_vals, atual, prefer_xlwings=XLWINGS)
+    # ---------- destaca valores pendentes / usados -----------------
+    destacar_inseridos(orig_path, used_vals, atual, prefer_xlwings=XLWINGS)
 
     log(f"Origem tratada em: {orig_path}")
     return spr
+
 
 
 
