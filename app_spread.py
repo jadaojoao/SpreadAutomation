@@ -141,12 +141,19 @@ def prepara_origem(
     engine = "openpyxl" if path.suffix.lower() in (".xlsx", ".xlsm") else None
     xls = pd.ExcelFile(path, engine=engine)
 
+    abas_validas = [
+        (orig, nova) for orig, nova in mapa.items() if orig in xls.sheet_names
+    ]
+    if not abas_validas:
+        raise ValueError(
+            "Arquivo de origem não contém nenhuma das abas esperadas"
+        )
+
     with pd.ExcelWriter(out_path, engine="openpyxl") as wr:
-        for aba_orig, aba_nova in mapa.items():
-            if aba_orig in xls.sheet_names:
-                df = pd.read_excel(xls, sheet_name=aba_orig, engine=engine)
-                df = df.rename(columns=make_ren(aba_orig))
-                df.to_excel(wr, sheet_name=aba_nova, index=False)
+        for aba_orig, aba_nova in abas_validas:
+            df = pd.read_excel(xls, sheet_name=aba_orig, engine=engine)
+            df = df.rename(columns=make_ren(aba_orig))
+            df.to_excel(wr, sheet_name=aba_nova, index=False)
 
     return out_path
 
