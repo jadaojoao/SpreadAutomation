@@ -375,6 +375,7 @@ def inserir_depreciacao_dfc(
 
 def destacar_inseridos(orig_tratada: Path,
                        used_vals: set[int],
+
                        atual: str,
                        prefer_xlwings: bool = True) -> None:
     """Realça (fundo verde claro + negrito) todas as células da(s)
@@ -385,6 +386,7 @@ def destacar_inseridos(orig_tratada: Path,
     o destaque é aplicado com ``xlwings`` mantendo o arquivo aberto.
     Caso contrário, utiliza ``openpyxl`` como fallback (preservando macros
     em arquivos ``.xlsm``).
+
     """
 
     if not used_vals:
