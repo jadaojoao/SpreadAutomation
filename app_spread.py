@@ -1,10 +1,11 @@
-# app_spread.py · v17  (trecho completo até antes da classe GUI)
+# app_spread.py · v1 (Com o git e code agente ChatGPT)
 # --------------------------------------------------------------------
 # • Coluna-origem / destino por LETRA ou índice
 # • Linha inicial global  +  Linha inicial DRE (trimestre)
 # • Cabeçalhos corretos para ano × trimestre
 # • DRE trimestral: linhas mapeadas manualmente
 # • Atualiza planilha ABERTA via xlwings; fallback openpyxl
+# • Destaca valores usados na origem tratada
 # pip install openpyxl xlwings customtkinter pandas
 # pip install -U customtkinter  # se necessário
 # test com Python 3.10+ e xlwings >= 0.30.0
