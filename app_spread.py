@@ -375,16 +375,64 @@ def inserir_depreciacao_dfc(
 
 def destacar_inseridos(orig_tratada: Path,
                        used_vals: set[int],
-                       atual: str) -> None:
-    """
-    Realça (fundo verde claro + negrito) todas as células da(s)
+                       atual: str,
+                       prefer_xlwings: bool = True) -> None:
+    """Realça (fundo verde claro + negrito) todas as células da(s)
     coluna(s) cujo cabeçalho == ``atual`` **e** cujo valor numérico
     está em ``used_vals``. Salva o arquivo no mesmo caminho.
+
+    Se ``prefer_xlwings`` for ``True`` e a biblioteca estiver disponível,
+    o destaque é aplicado com ``xlwings`` mantendo o arquivo aberto.
+    Caso contrário, utiliza ``openpyxl`` como fallback (preservando macros
+    em arquivos ``.xlsm``).
     """
+
     if not used_vals:
         return  # nada a destacar
 
-    wb = load_workbook(orig_tratada)
+    if prefer_xlwings and XLWINGS:
+        try:
+            for bk in xw.books:
+                if Path(bk.fullname).resolve() == orig_tratada.resolve():
+                    wb = bk
+                    break
+            else:
+                wb = xw.Book(str(orig_tratada))
+
+            for sht in wb.sheets:
+                try:
+                    headers = sht.range("A1").expand("right").value
+                except Exception:
+                    headers = None
+                if not headers:
+                    continue
+                if not isinstance(headers, list):
+                    headers = [headers]
+                atual_cols = [i + 1 for i, val in enumerate(headers)
+                              if str(val).strip() == atual]
+                if not atual_cols:
+                    continue
+
+                last_row = sht.cells.last_cell.row
+                for c in atual_cols:
+                    rng = sht.range((2, c), (last_row, c)).value
+                    if last_row == 1:
+                        rng = []
+                    if not isinstance(rng, list):
+                        rng = [rng]
+                    for idx, val in enumerate(rng, start=2):
+                        if normaliza_num(val) in used_vals:
+                            cell = sht.cells(idx, c)
+                            cell.color = (204, 255, 204)
+                            cell.api.Font.Bold = True
+
+            wb.save()
+            return
+        except Exception:
+            pass  # fallback para openpyxl
+
+    keep_vba = orig_tratada.suffix.lower() == ".xlsm"
+    wb = load_workbook(orig_tratada, keep_vba=keep_vba)
     fill = PatternFill("solid", fgColor="CCFFCC")   # verde claro
     bold = Font(bold=True)
 
@@ -496,7 +544,7 @@ def processar(ori: Path, spr: Path, tipo: str,
         wb.save(spr)
 
 
-    destacar_inseridos(orig_tratada, used_vals, atual)
+    destacar_inseridos(orig_tratada, used_vals, atual, prefer_xlwings=XLWINGS)
 
     log(f"Origem tratada em: {orig_path}")
     return spr
