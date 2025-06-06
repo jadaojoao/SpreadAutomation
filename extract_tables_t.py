@@ -197,14 +197,16 @@ def save_sections_to_excel(pdf_path: str, sections: Dict[str, Tuple[int, int]], 
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Example usage: update these paths/ranges for your PDFs.
-    PDF_FILE = "matrixITR.pdf"  # path to your PDF
+    #PDF_FILE = "C:\\Users\\jaotr\\OneDrive\\Documentos\\itau_am\\py_table_scammer\\ITRs DFPs non-CVM\\matrixITR.pdf"  # path to your PDF
+    PDF_FILE = "C:\\Users\\jaotr\\OneDrive\\Documentos\\itau_am\\py_table_scammer\\ITRs DFPs non-CVM\\aegea_corsanITR.pdf"  # path to your PDF
     SECTIONS = {
-        "BP": (8, 10),
+        "BP": (15, 15),
         # Add other sections with their page ranges, e.g.:
-        # "DRE": (11, 13),
-        # "DFC": (14, 15),
+        "DRE": (16, 16),
+        "DFC": (19, 19),
     }
-    out_path = Path(PDF_FILE).with_suffix("_tables.xlsx")
+    pdf_path = Path(PDF_FILE)
+    out_path = pdf_path.with_name(f"{pdf_path.stem}_tables.xlsx")
     try:
         save_sections_to_excel(PDF_FILE, SECTIONS, out_path)
         logger.info("Tables written to %s", out_path)
