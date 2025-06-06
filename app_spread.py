@@ -1,10 +1,11 @@
-# app_spread.py · v17  (trecho completo até antes da classe GUI)
+# app_spread.py · v1 (Com o git e code agente ChatGPT)
 # --------------------------------------------------------------------
 # • Coluna-origem / destino por LETRA ou índice
 # • Linha inicial global  +  Linha inicial DRE (trimestre)
 # • Cabeçalhos corretos para ano × trimestre
 # • DRE trimestral: linhas mapeadas manualmente
 # • Atualiza planilha ABERTA via xlwings; fallback openpyxl
+# • Destaca valores usados na origem tratada
 # pip install openpyxl xlwings customtkinter pandas
 # pip install -U customtkinter  # se necessário
 # test com Python 3.10+ e xlwings >= 0.30.0
@@ -366,37 +367,35 @@ def inserir_depreciacao_dfc(
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font
 
-def destacar_pendentes(orig_tratada: Path,
-                       skipped_vals: set[int],
+
+def destacar_inseridos(orig_tratada: Path,
+                       used_vals: set[int],
                        atual: str) -> None:
     """
-    Abre `orig_tratada` e realça (fundo amarelo + negrito) todas as
-    células da(s) coluna(s) cujo cabeçalho == `atual` **e** cujo
-    valor numérico está em `skipped_vals`.
-    Salva o arquivo no mesmo caminho.
+    Realça (fundo verde claro + negrito) todas as células da(s)
+    coluna(s) cujo cabeçalho == ``atual`` **e** cujo valor numérico
+    está em ``used_vals``. Salva o arquivo no mesmo caminho.
     """
-    if not skipped_vals:
+    if not used_vals:
         return  # nada a destacar
 
     wb = load_workbook(orig_tratada)
-    fill = PatternFill("solid", fgColor="FFFF99")   # amarelo claro
+    fill = PatternFill("solid", fgColor="CCFFCC")   # verde claro
     bold = Font(bold=True)
 
     for ws in wb.worksheets:
-        # —–– descobre quais colunas têm o cabeçalho == período atual –
         atual_cols = [
             cell.column
-            for cell in ws[1]                # linha 1 (cabeçalhos)
+            for cell in ws[1]
             if str(cell.value).strip() == atual
         ]
         if not atual_cols:
             continue
 
-        # —–– percorre apenas essas colunas ––––––––––––––––––––––––––
         for row in ws.iter_rows(min_row=2, values_only=False):
             for c in atual_cols:
-                cell = row[c - 1]            # convert col → index
-                if normaliza_num(cell.value) in skipped_vals:
+                cell = row[c - 1]
+                if normaliza_num(cell.value) in used_vals:
                     cell.fill = fill
                     cell.font = bold
 
@@ -448,6 +447,7 @@ def processar(ori: Path, spr: Path, tipo: str,
               dre_start: int,
               out_dir: Path | None = None,
               log=lambda _msg: None) -> Path:
+
     """Processa ``spr`` e realça valores usados/pentes na origem.
 
     Se ``out_dir`` for ``None`` a origem é sobrescrita; caso contrário,
@@ -526,18 +526,8 @@ def processar(ori: Path, spr: Path, tipo: str,
         spr = spr.with_name(out_name)
         wb.save(spr)
 
-    # ---------- destaca valores pendentes na origem tratada ----------
-    destacar_pendentes(orig_path, skipped_vals, atual)
-    destacar_inseridos(orig_path, used_vals, atual)
 
-    # ---------- relatório de linhas (spread) -------------------------
-    if skipped:                                              # ← corrigido
-        pend_file = spr.parent / f"linhas_pendentes_{atual}.txt"
-        pend_file.write_text("\n".join(map(str, skipped)), encoding="utf-8")
-        log(f"{len(skipped)} linhas não mapeadas  →  {pend_file}")
-        log(f"Valores destacados em {orig_path}")
-    else:
-        log("Nenhuma linha pendente 🙂")
+    destacar_inseridos(orig_tratada, used_vals, atual)
 
     log(f"Origem tratada em: {orig_path}")
     return spr
