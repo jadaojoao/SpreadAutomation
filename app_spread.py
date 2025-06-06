@@ -164,15 +164,21 @@ def shift_formula(f: str, delta: int) -> str:
     return pat.sub(repl, f)
 
 
-def adjust_complex_formula(formula: str, delta: int, map_number) -> str:
+def adjust_complex_formula(formula: str, delta: int, map_number,
+                           used_vals: set[int] | None = None) -> str:
     num_pat = re.compile(r"(?<![A-Za-z])[-+]?\d[\d\.,]*")
     f2 = shift_formula(formula, delta)
-    return num_pat.sub(
-        lambda m: str(map_number(normaliza_num(m.group(0))))
-        if map_number(normaliza_num(m.group(0))) is not None
-        else m.group(0),
-        f2,
-    )
+
+    def repl(m: re.Match) -> str:
+        n = normaliza_num(m.group(0))
+        novo = map_number(n)
+        if novo is not None:
+            if used_vals is not None:
+                used_vals.add(novo)
+            return str(novo)
+        return m.group(0)
+
+    return num_pat.sub(repl, f2)
 
 
 # ═══════════ atualizar worksheet (normal) ═══════════════════════════
@@ -192,7 +198,7 @@ def atualizar_ws(ws,
                  abas: Dict[str, pd.DataFrame],
                  src_idx: int, dst_idx: int,
                  atual: str, ant: str,
-                 start_row: int) -> tuple[list[int], set[int]]:
+                 start_row: int) -> tuple[list[int], set[int], set[int]]:
     """
     Copia / ajusta dados da coluna-origem para a coluna-destino
     (ver documentação v17) e devolve:
@@ -200,6 +206,7 @@ def atualizar_ws(ws,
         • skipped_rows → linhas (1-based) cujo valor numérico ≠ 0 não
           pôde ser gravado na coluna-destino;
         • skipped_vals → conjunto dos números correspondentes.
+        • used_vals    → conjunto dos números gravados com sucesso.
     """
     c_src, c_dst = src_idx + 1, dst_idx + 1
     delta = c_dst - c_src
@@ -207,6 +214,7 @@ def atualizar_ws(ws,
 
     skipped_rows: list[int] = []
     skipped_vals: set[int] = set()
+    used_vals:    set[int] = set()
 
     empty_streak = 0
     r = start_row
@@ -228,14 +236,17 @@ def atualizar_ws(ws,
                 sign = "+" if tok[0] == "+" else "-" if tok[0] == "-" else ""
                 n_int = normaliza_num(tok.lstrip("+-"))
                 novo  = valor_corresp(abas, n_int, ant, atual)
-                return (sign + str(abs(novo))) if novo is not None else tok
+                if novo is not None:
+                    used_vals.add(novo)
+                    return sign + str(abs(novo))
+                return tok
             destino = "=" + num_pat.sub(repl, v[1:])
             wrote = destino != v
 
         # ── 2. fórmula complexa -------------------------------------
         elif isinstance(v, str) and v.startswith("="):
             mp = lambda n: valor_corresp(abas, n, ant, atual)
-            destino = adjust_complex_formula(v, delta, mp)
+            destino = adjust_complex_formula(v, delta, mp, used_vals)
             wrote = destino != v
 
         # ── 3. número isolado ---------------------------------------
@@ -243,6 +254,8 @@ def atualizar_ws(ws,
             novo = valor_corresp(abas, n, ant, atual)
             destino = novo if novo is not None else v
             wrote = novo is not None
+            if novo is not None:
+                used_vals.add(novo)
 
         # ── 4. texto / outro tipo -----------------------------------
         else:
@@ -266,7 +279,7 @@ def atualizar_ws(ws,
 
         r += 1
 
-    return skipped_rows, skipped_vals
+    return skipped_rows, skipped_vals, used_vals
 
 
 # ═══════════ mapa de linhas DRE (trimestre) ═════════════════════════
@@ -355,6 +368,40 @@ def destacar_pendentes(orig_tratada: Path,
     wb.save(orig_tratada)
 
 
+def destacar_inseridos(orig_tratada: Path,
+                       used_vals: set[int],
+                       atual: str) -> None:
+    """
+    Realça (fundo verde claro + negrito) todas as células da(s)
+    coluna(s) cujo cabeçalho == ``atual`` **e** cujo valor numérico
+    está em ``used_vals``. Salva o arquivo no mesmo caminho.
+    """
+    if not used_vals:
+        return  # nada a destacar
+
+    wb = load_workbook(orig_tratada)
+    fill = PatternFill("solid", fgColor="CCFFCC")   # verde claro
+    bold = Font(bold=True)
+
+    for ws in wb.worksheets:
+        atual_cols = [
+            cell.column
+            for cell in ws[1]
+            if str(cell.value).strip() == atual
+        ]
+        if not atual_cols:
+            continue
+
+        for row in ws.iter_rows(min_row=2, values_only=False):
+            for c in atual_cols:
+                cell = row[c - 1]
+                if normaliza_num(cell.value) in used_vals:
+                    cell.fill = fill
+                    cell.font = bold
+
+    wb.save(orig_tratada)
+
+
 # ═══════════ pipeline principal (processar) ═════════════════════════
 from openpyxl.styles import PatternFill, Font
 from openpyxl import load_workbook
@@ -366,7 +413,8 @@ def processar(ori: Path, spr: Path, tipo: str,
               dre_start: int,
               out_dir: Path,
               log=lambda _msg: None) -> Path:
-    """Processa spread + salva origem tratada + realça valores pendentes."""
+    """Processa spread, salva origem tratada e realça valores usados e
+    pendentes."""
     src_idx, dst_idx = col_txt_to_idx(src_txt), col_txt_to_idx(dst_txt)
     atual, ant, ant2, is_trim = periodos(periodo)
 
@@ -394,7 +442,7 @@ def processar(ori: Path, spr: Path, tipo: str,
             set_val = lambda r, c, v: (
                 sht.cells(r, c).__setattr__("formula" if isinstance(v, str) and v.startswith("=") else "value", v))
 
-            skipped, skipped_vals = atualizar_ws(
+            skipped, skipped_vals, used_vals = atualizar_ws(
                 sht, get_val, set_val, abas,
                 src_idx, dst_idx, atual, ant, start_row)
 
@@ -405,7 +453,7 @@ def processar(ori: Path, spr: Path, tipo: str,
             wb.app.calculate(); wb.save()
         except Exception as exc:
             log(f"xlwings ⟶ fallback: {exc}")
-            skipped, skipped_vals = [], set()
+            skipped, skipped_vals, used_vals = [], set(), set()
 
     # ---------- fallback openpyxl ---------------------------------------
     else:
@@ -413,7 +461,7 @@ def processar(ori: Path, spr: Path, tipo: str,
         wb = load_workbook(spr, keep_vba=is_xlsm)
         ws = wb.active
 
-        skipped, skipped_vals = atualizar_ws(
+        skipped, skipped_vals, used_vals = atualizar_ws(
             ws,
             lambda r, c: ws.cell(r, c).value,
             lambda r, c, v: ws.cell(r, c).__setattr__("value", v),
@@ -429,6 +477,7 @@ def processar(ori: Path, spr: Path, tipo: str,
 
     # ---------- destaca valores pendentes na origem tratada ----------
     destacar_pendentes(orig_tratada, skipped_vals, atual)
+    destacar_inseridos(orig_tratada, used_vals, atual)
 
     # ---------- relatório de linhas (spread) -------------------------
     if skipped:                                              # ← corrigido
