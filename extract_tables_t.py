@@ -1,7 +1,3 @@
-<<<<<<< HEAD
-#extract_tables_t.py
-#This script extracts tables from a PDF file using the tabula-py library, cleans and splits the data, and saves it to an Excel file.
-=======
 """extract_tables_t.py
 ----------------------
 Improved table extraction from corporate PDF reports.
@@ -22,7 +18,6 @@ import re
 import unicodedata
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple, Union
->>>>>>> 4ac469dc8910a90499ae67a8bd2fabea7b65da3e
 
 import pandas as pd
 from tabula import read_pdf
