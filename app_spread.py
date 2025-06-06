@@ -331,42 +331,6 @@ def aplicar_dre_manual(
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font
 
-def destacar_pendentes(orig_tratada: Path,
-                       skipped_vals: set[int],
-                       atual: str) -> None:
-    """
-    Abre `orig_tratada` e realça (fundo amarelo + negrito) todas as
-    células da(s) coluna(s) cujo cabeçalho == `atual` **e** cujo
-    valor numérico está em `skipped_vals`.
-    Salva o arquivo no mesmo caminho.
-    """
-    if not skipped_vals:
-        return  # nada a destacar
-
-    wb = load_workbook(orig_tratada)
-    fill = PatternFill("solid", fgColor="FFFF99")   # amarelo claro
-    bold = Font(bold=True)
-
-    for ws in wb.worksheets:
-        # —–– descobre quais colunas têm o cabeçalho == período atual –
-        atual_cols = [
-            cell.column
-            for cell in ws[1]                # linha 1 (cabeçalhos)
-            if str(cell.value).strip() == atual
-        ]
-        if not atual_cols:
-            continue
-
-        # —–– percorre apenas essas colunas ––––––––––––––––––––––––––
-        for row in ws.iter_rows(min_row=2, values_only=False):
-            for c in atual_cols:
-                cell = row[c - 1]            # convert col → index
-                if normaliza_num(cell.value) in skipped_vals:
-                    cell.fill = fill
-                    cell.font = bold
-
-    wb.save(orig_tratada)
-
 
 def destacar_inseridos(orig_tratada: Path,
                        used_vals: set[int],
@@ -476,17 +440,7 @@ def processar(ori: Path, spr: Path, tipo: str,
         wb.save(spr)
 
     # ---------- destaca valores pendentes na origem tratada ----------
-    destacar_pendentes(orig_tratada, skipped_vals, atual)
     destacar_inseridos(orig_tratada, used_vals, atual)
-
-    # ---------- relatório de linhas (spread) -------------------------
-    if skipped:                                              # ← corrigido
-        pend_file = spr.parent / f"linhas_pendentes_{atual}.txt"
-        pend_file.write_text("\n".join(map(str, skipped)), encoding="utf-8")
-        log(f"{len(skipped)} linhas não mapeadas  →  {pend_file}")
-        log(f"Valores destacados em {orig_tratada}")
-    else:
-        log("Nenhuma linha pendente 🙂")
 
     log(f"Origem tratada em: {orig_tratada}")
     return spr
