@@ -24,6 +24,7 @@ from openpyxl.utils import (
     column_index_from_string as col2idx,
     get_column_letter as idx2col,
 )
+from openpyxl.styles import PatternFill, Font
 
 try:
     import xlwings as xw
@@ -371,43 +372,6 @@ def inserir_depreciacao_dfc(
 
     return num_val
 
-from openpyxl import load_workbook
-from openpyxl.styles import PatternFill, Font
-
-
-def destacar_inseridos(orig_tratada: Path,
-                       used_vals: set[int],
-                       atual: str) -> None:
-    """
-    Realça (fundo verde claro + negrito) todas as células da(s)
-    coluna(s) cujo cabeçalho == ``atual`` **e** cujo valor numérico
-    está em ``used_vals``. Salva o arquivo no mesmo caminho.
-    """
-    if not used_vals:
-        return  # nada a destacar
-
-    wb = load_workbook(orig_tratada)
-    fill = PatternFill("solid", fgColor="CCFFCC")   # verde claro
-    bold = Font(bold=True)
-
-    for ws in wb.worksheets:
-        atual_cols = [
-            cell.column
-            for cell in ws[1]
-            if str(cell.value).strip() == atual
-        ]
-        if not atual_cols:
-            continue
-
-        for row in ws.iter_rows(min_row=2, values_only=False):
-            for c in atual_cols:
-                cell = row[c - 1]
-                if normaliza_num(cell.value) in used_vals:
-                    cell.fill = fill
-                    cell.font = bold
-
-    wb.save(orig_tratada)
-
 
 def destacar_inseridos(orig_tratada: Path,
                        used_vals: set[int],
@@ -444,8 +408,6 @@ def destacar_inseridos(orig_tratada: Path,
 
 
 # ═══════════ pipeline principal (processar) ═════════════════════════
-from openpyxl.styles import PatternFill, Font
-from openpyxl import load_workbook
 
 def processar(ori: Path, spr: Path, tipo: str,
               periodo: str,
