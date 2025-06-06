@@ -75,14 +75,15 @@ def prepara_origem(
     ant: str,
     ant2: str,
     is_trim: bool,
-    out_dir: Path,              # ← novo parâmetro
+    out_dir: Path | None,       # pasta destino ou None para sobrescrever
 ) -> Path:
     """
-    Cria o arquivo *origem_tratada* (xlsx/xlsm) em `out_dir` com:
+    Cria o arquivo *origem_tratada* (xlsx/xlsm) em `out_dir` (ou sobrescreve
+    `path` quando ``out_dir`` é ``None``) com:
       • apenas as abas relevantes;
       • colunas de período renomeadas (ano × trimestre).
 
-    Devolve o Path desse arquivo.
+    Devolve o ``Path`` do arquivo gravado.
     """
     mapa = {
         "consolidado": {
@@ -129,10 +130,13 @@ def prepara_origem(
             return col
         return ren
 
-    # --------- cria pasta destino, nomeia arquivo --------------------
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_name = f"{path.stem}_tratado{path.suffix}"
-    out_path = out_dir / out_name
+    # --------- cria pasta destino / nomeia arquivo ------------------
+    if out_dir is not None:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_name = f"{path.stem}_tratado{path.suffix}"
+        out_path = out_dir / out_name
+    else:
+        out_path = path
 
     engine = "openpyxl" if path.suffix.lower() in (".xlsx", ".xlsm") else None
     xls = pd.ExcelFile(path, engine=engine)
@@ -329,8 +333,73 @@ def aplicar_dre_manual(
         else:
             sheet.cell(linha, col_dst_1based, value=valor)
 
+
+def inserir_depreciacao_dfc(
+    df_dfc: pd.DataFrame,
+    sheet,
+    col_dst_1based: int,
+    linha: int,
+    col_valor: str,
+    is_xlwings: bool,
+) -> int | None:
+    """Insere na ``linha`` o valor de Depreciações/Amortizações da DFC."""
+    if df_dfc is None or col_valor not in df_dfc.columns:
+        return None
+
+    desc = df_dfc["Descricao Conta"].astype(str)
+    mask = (desc.str.contains("deprecia", case=False, na=False) |
+            desc.str.contains("amortiza", case=False, na=False))
+    try:
+        raw_val = df_dfc.loc[mask, col_valor].iloc[0]
+    except Exception:
+        return None
+
+    num_val = normaliza_num(raw_val)
+    valor = num_val if num_val is not None else raw_val
+
+    if is_xlwings:
+        sheet.cells(linha, col_dst_1based).value = valor
+    else:
+        sheet.cell(linha, col_dst_1based, value=valor)
+
+    return num_val
+
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font
+
+
+def destacar_inseridos(orig_tratada: Path,
+                       used_vals: set[int],
+                       atual: str) -> None:
+    """
+    Realça (fundo verde claro + negrito) todas as células da(s)
+    coluna(s) cujo cabeçalho == ``atual`` **e** cujo valor numérico
+    está em ``used_vals``. Salva o arquivo no mesmo caminho.
+    """
+    if not used_vals:
+        return  # nada a destacar
+
+    wb = load_workbook(orig_tratada)
+    fill = PatternFill("solid", fgColor="CCFFCC")   # verde claro
+    bold = Font(bold=True)
+
+    for ws in wb.worksheets:
+        atual_cols = [
+            cell.column
+            for cell in ws[1]
+            if str(cell.value).strip() == atual
+        ]
+        if not atual_cols:
+            continue
+
+        for row in ws.iter_rows(min_row=2, values_only=False):
+            for c in atual_cols:
+                cell = row[c - 1]
+                if normaliza_num(cell.value) in used_vals:
+                    cell.fill = fill
+                    cell.font = bold
+
+    wb.save(orig_tratada)
 
 
 def destacar_inseridos(orig_tratada: Path,
@@ -376,20 +445,25 @@ def processar(ori: Path, spr: Path, tipo: str,
               src_txt: str, dst_txt: str,
               start_row: int,
               dre_start: int,
-              out_dir: Path,
+              out_dir: Path | None = None,
               log=lambda _msg: None) -> Path:
-    """Processa spread, salva origem tratada e realça valores usados e
-    pendentes."""
+
+    """Processa ``spr`` e realça valores usados/pentes na origem.
+
+    Se ``out_dir`` for ``None`` a origem é sobrescrita; caso contrário,
+    o arquivo tratado é salvo em ``out_dir``.
+    """
     src_idx, dst_idx = col_txt_to_idx(src_txt), col_txt_to_idx(dst_txt)
     atual, ant, ant2, is_trim = periodos(periodo)
 
     # --- cria / grava a origem tratada ----------------------------------
-    orig_tratada = prepara_origem(
+    orig_path = prepara_origem(
         ori, tipo, atual, ant, ant2, is_trim, out_dir)
 
-    abas = pd.read_excel(orig_tratada, sheet_name=None, engine="openpyxl")
+    abas = pd.read_excel(orig_path, sheet_name=None, engine="openpyxl")
     dre_sheet = "cons DRE" if tipo == "consolidado" else "ind DRE"
     df_dre = abas.get(dre_sheet)
+    df_dfc = abas.get("cons DFC" if tipo == "consolidado" else "ind DFC")
 
     # ---------- xlwings --------------------------------------------------
     if XLWINGS and spr.suffix.lower() in {".xlsx", ".xlsm"}:
@@ -415,6 +489,12 @@ def processar(ori: Path, spr: Path, tipo: str,
                 aplicar_dre_manual(df_dre, sht, dst_idx + 1,
                                    dre_start, atual, True)
 
+            if df_dfc is not None:
+                v199 = inserir_depreciacao_dfc(
+                    df_dfc, sht, dst_idx + 1, 199, atual, True)
+                if v199 is not None:
+                    used_vals.add(v199)
+
             wb.app.calculate(); wb.save()
         except Exception as exc:
             log(f"xlwings ⟶ fallback: {exc}")
@@ -436,14 +516,20 @@ def processar(ori: Path, spr: Path, tipo: str,
             aplicar_dre_manual(df_dre, ws, dst_idx + 1,
                                dre_start, atual, False)
 
+        if df_dfc is not None:
+            v199 = inserir_depreciacao_dfc(
+                df_dfc, ws, dst_idx + 1, 199, atual, False)
+            if v199 is not None:
+                used_vals.add(v199)
+
         out_name = f"{spr.stem} {atual}{'.xlsm' if is_xlsm else '.xlsx'}"
         spr = spr.with_name(out_name)
         wb.save(spr)
 
-    # ---------- destaca valores pendentes na origem tratada ----------
+
     destacar_inseridos(orig_tratada, used_vals, atual)
 
-    log(f"Origem tratada em: {orig_tratada}")
+    log(f"Origem tratada em: {orig_path}")
     return spr
 
 
@@ -553,7 +639,6 @@ class App(ctk.CTk):
         try:
             ori  = Path(self.var_ori.get())
             spr  = Path(self.var_spr.get())
-            outd = Path(self.var_outdir.get() or Path.cwd())
 
             if not ori.exists() or not spr.exists():
                 self._log("Selecione arquivos válidos."); return
@@ -562,7 +647,7 @@ class App(ctk.CTk):
                 ori, spr, self.var_tipo.get(), self.var_per.get(),
                 self.var_src.get(), self.var_dst.get(),
                 int(self.var_start.get()), int(self.var_dre.get()),
-                out_dir=outd,
+                out_dir=None,
                 log=self._log)
 
             self._log(f"✔️  Terminado: {out_spread}")
