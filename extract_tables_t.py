@@ -1,216 +1,202 @@
 """extract_tables_t.py
 ----------------------
-Improved table extraction from corporate PDF reports.
+Utility to extract financial tables from PDF reports.
 
-Features:
-- Detects whether pages are text-based or scanned images.
-- Uses Tabula on text-based pages and Tesseract OCR as a fallback.
-- Cleans and splits merged cells using regex heuristics.
-- Saves each extracted table into an Excel workbook with a sheet per
-  report section (BP, DRE, DFC).
-- Provides logging and error handling for easier troubleshooting.
+The module uses ``pdfplumber`` for text based pages and falls back to
+OCR via ``pdf2image`` and ``pytesseract`` when no text is detected.
+Each report section (Balance Sheet, Income Statement and Cash Flow
+Statement) is saved to a dedicated sheet in the resulting Excel file.
+
+The implementation avoids the very aggressive splitting rules of the
+previous version and tries to preserve column headers and multi-line row
+labels.  Simple cleaning of invisible characters and footnotes is
+applied so the final DataFrame mirrors the PDF layout as closely as
+possible.
 """
-
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Dict, Iterable, List, Tuple
 import logging
 import re
 import unicodedata
-from pathlib import Path
-from typing import Dict, Iterable, List, Tuple, Union
-
 
 import pandas as pd
-from tabula import read_pdf
 import pdfplumber
 from pdf2image import convert_from_path
 import pytesseract
 
-# ---------------------------------------------------------------------------
-# Logging configuration
-# ---------------------------------------------------------------------------
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 # ---------------------------------------------------------------------------
-# Cleaning helpers (similar to the previous version)
+# Helpers
 # ---------------------------------------------------------------------------
 REGEX_INVISIBLES = re.compile(r"[\u200b\u200e\u202f\xa0]")
-
-def clean_and_split_cell(cell: Union[str, float, int]) -> Union[str, float, int]:
-    """Clean and split concatenated or malformed cell content."""
-
-    if not isinstance(cell, str):
-        return cell
-
-    cell = unicodedata.normalize("NFKC", cell)
-    cell = REGEX_INVISIBLES.sub("", cell).strip()
-
-    cell = re.sub(r"(\d+)\s*-\s*$", r"\1;-", cell)
-    cell = re.sub(r"(-?\d+)\s+-\b", r"\1;-", cell)
-    cell = re.sub(r"-\s+(-?\d+)", r"-;\1", cell)
-    cell = re.sub(
-        r"(?<![\d/])(\d{1,3}(?:\.\d{3})*|\d+)\s+(\d{1,3}(?:\.\d{3})*|\d+)(?![\d/])",
-        r"\1;\2",
-        cell,
-    )
-    cell = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", cell)
-    cell = re.sub(r"([a-z])([A-Z])", r"\1 \2", cell)
-    cell = re.sub(r"(?<=[a-zA-Z])(?=\d)", " ", cell)
-    cell = re.sub(r"(?<=\d)(?=\d{3}\b)", " ", cell)
-    cell = re.sub(r"(\d{2})\s*/\s*(\d{2})\s*/\s*(\d{4})", r"\1/\2/\3", cell)
-    cell = re.sub(r"(\d)\s+(\d{3})", r"\1\2", cell)
-    cell = re.sub(r"(\d{4})\s+(\d{4})", r"\1;\2", cell)
-    cell = re.sub(r"(\d{3})(\d\.\d{3})", r"\1;\2", cell)
-    cell = re.sub(r"(\d{1,3}(?:\.\d{3})+)(\d{3})\b", r"\1;\2", cell)
-    cell = re.sub(r"(\d+\.\d{3})(\d{3}\b)", r"\1;\2", cell)
-    cell = re.sub(r"(\d+\.\d)\s+(\d{3}\.\d{3})", r"\1;\2", cell)
-    cell = re.sub(r"(\d{1,3}(?:\.\d{3})+)(\d{1,3}(?:\.\d{3})+)", r"\1;\2", cell)
-    cell = re.sub(r"\((\d+\.\d{3})\)\s+\((\d+\.\d{3})\)", r"(\1);(\2)", cell)
-    cell = re.sub(r"\((\d+)\)\s+\((\d+)\)", r"(\1);(\2)", cell)
-    cell = re.sub(r"\((\d+)\)\s+(\d+)", r"(\1);\2", cell)
-    cell = re.sub(r"(\d+)\s+\((\d+)\)", r"\1;(\2)", cell)
-    cell = re.sub(r"(\d+)\s+\((\d+\.\d{3})\)", r"\1;(\2)", cell)
-    cell = re.sub(r"\((\d+\.\d{3})\)\s+(\d+)", r"(\1);\2", cell)
-    cell = re.sub(r"\((\d+)\)\((\d+\.\d{3})\)", r"\1;(\2)", cell)
-    cell = re.sub(r"\((\d+\.\d{3})\)\((\d+\.\d{3})\)", r"(\1);(\2)", cell)
-    cell = re.sub(r"\((\d+\.\d{3})\)\((\d+)\)", r"(\1);(\2)", cell)
-    cell = re.sub(r"\((\d+)\)\((\d+)\)", r"\1;(\2)", cell)
-    cell = re.sub(r"(\d+)\((\d+\.\d{3})\)", r"\1;(\2)", cell)
-    cell = re.sub(r"\((\d+(?:\.\d{3})?)\)", r"-\1", cell)
-    cell = re.sub(r"([a-zA-Z]+)\s*(\d{1,3})\b", r"\1;\2", cell)
-    cell = re.sub(r"(-?\d+)\s+-\b", r"\1;-", cell)
-    return cell.strip()
+FOOTNOTE_RE = re.compile(
+    r"accompanying notes are an integral part", re.IGNORECASE
+)
 
 
-def preprocess_table(df: pd.DataFrame) -> pd.DataFrame:
-    for col in df.columns:
-        df[col] = df[col].apply(clean_and_split_cell)
+def normalise_cell(value: object) -> object:
+    """Return cleaned cell value."""
+    if not isinstance(value, str):
+        return value
+    value = unicodedata.normalize("NFKC", value)
+    value = REGEX_INVISIBLES.sub("", value)
+    return value.strip()
+
+
+def merge_multiline_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Join rows where only the first column contains text."""
+
+    rows: List[List[object]] = []
+    buffer: List[object] | None = None
+
+    for _, r in df.iterrows():
+        first = (r.iloc[0] or "").strip() if isinstance(r.iloc[0], str) else r.iloc[0]
+        rest = r.iloc[1:]
+        if buffer is not None and (pd.isna(first) or rest.isna().all()):
+            # continuation of previous label
+            if isinstance(first, str) and first:
+                buffer[0] = f"{buffer[0]} {first}".strip()
+            continue
+
+        if buffer is not None:
+            rows.append(buffer)
+        buffer = r.tolist()
+
+    if buffer is not None:
+        rows.append(buffer)
+
+    return pd.DataFrame(rows, columns=df.columns)
+
+
+def clean_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Basic clean-up of a pdfplumber table."""
+
+    df = df.applymap(normalise_cell)
+    df.dropna(axis=0, how="all", inplace=True)
+    df.dropna(axis=1, how="all", inplace=True)
+
+    if not df.empty:
+        df = df[~df.iloc[:, 0].astype(str).str.match(FOOTNOTE_RE, na=False)]
+
+    df.reset_index(drop=True, inplace=True)
+    df = merge_multiline_rows(df)
+    df.reset_index(drop=True, inplace=True)
     return df
 
-
-def manually_split_columns(df: pd.DataFrame) -> pd.DataFrame:
-    for col in df.columns:
-        if df[col].dtype == "object":
-            df[col] = df[col].apply(
-                lambda x: re.split(r"(?<=\d{3})(?=\d{3})", x)
-                if isinstance(x, str) and re.search(r"\d{3}\d{3}", x)
-                else x
-            )
-            df[col] = df[col].apply(lambda x: ";".join(x) if isinstance(x, list) else x)
-    return df
-
-
-def split_semicolon_values(df: pd.DataFrame) -> pd.DataFrame:
-    new_cols: List[pd.DataFrame] = []
-    for col in df.columns:
-        if df[col].dtype == "object" and df[col].str.contains(";").any():
-            split_data = df[col].str.split(";", expand=True)
-            split_data.columns = [f"{col}_{i+1}" for i in range(split_data.shape[1])]
-            new_cols.append(split_data)
-        else:
-            new_cols.append(df[[col]])
-    return pd.concat(new_cols, axis=1)
 
 # ---------------------------------------------------------------------------
 # Detection helpers
 # ---------------------------------------------------------------------------
 
-def pages_range(start: int, end: int) -> List[int]:
-    return list(range(start, end + 1))
-
-
 def is_scanned(pdf_path: str, pages: Iterable[int]) -> bool:
-    """Return True if pages appear to contain no text (likely scanned)."""
+    """Return ``True`` if all selected pages contain no text."""
     try:
         with pdfplumber.open(pdf_path) as pdf:
             for p in pages:
                 if p - 1 < len(pdf.pages):
-                    txt = pdf.pages[p - 1].extract_text()
-                    if txt and txt.strip():
+                    if pdf.pages[p - 1].extract_text() or "":
                         return False
-    except Exception as exc:  # pragma: no cover
-        logger.warning("Failed to inspect PDF text: %s", exc)
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        logger.warning("Failed to inspect PDF: %s", exc)
     return True
+
 
 # ---------------------------------------------------------------------------
 # Extraction routines
 # ---------------------------------------------------------------------------
 
-def extract_tables_text(pdf_path: str, pages: str) -> List[pd.DataFrame]:
-    try:
-        tables = read_pdf(
-            pdf_path,
-            pages=pages,
-            multiple_tables=True,
-            stream=True,
-            pandas_options={"header": None},
-        )
-        return [preprocess_table(manually_split_columns(split_semicolon_values(t))) for t in tables]
-    except Exception as exc:
-        logger.error("Tabula extraction failed: %s", exc)
-        return []
-
-
-def extract_tables_ocr(pdf_path: str, page_numbers: Iterable[int]) -> List[pd.DataFrame]:
+def extract_tables_text(pdf_path: str, page_numbers: Iterable[int]) -> List[pd.DataFrame]:
+    """Extract tables from the given pages using pdfplumber."""
     results: List[pd.DataFrame] = []
-    try:
-        images = convert_from_path(pdf_path, first_page=min(page_numbers), last_page=max(page_numbers))
-    except Exception as exc:
-        logger.error("Failed to render pages for OCR: %s", exc)
-        return results
+    with pdfplumber.open(pdf_path) as pdf:
+        for pno in page_numbers:
+            if pno - 1 >= len(pdf.pages):
+                continue
+            page = pdf.pages[pno - 1]
+            tables = page.extract_tables(
+                {
+                    "vertical_strategy": "lines",
+                    "horizontal_strategy": "lines",
+                    "intersection_tolerance": 5,
+                }
+            )
+            for tb in tables:
+                df = pd.DataFrame(tb)
+                df = clean_table(df)
+                if not df.empty:
+                    results.append(df)
+    return results
+
+
+def extract_tables_ocr(pdf_path: str, pages: Iterable[int]) -> List[pd.DataFrame]:
+    """Fallback OCR extraction for scanned pages."""
+    images = convert_from_path(pdf_path, first_page=min(pages), last_page=max(pages))
+    tables: List[pd.DataFrame] = []
 
     for img in images:
         text = pytesseract.image_to_string(img, config="--psm 6")
         rows = [re.split(r"\s{2,}", ln.strip()) for ln in text.splitlines() if ln.strip()]
         if rows:
             df = pd.DataFrame(rows)
-            results.append(preprocess_table(manually_split_columns(split_semicolon_values(df))))
-    return results
+            df = clean_table(df)
+            if not df.empty:
+                tables.append(df)
+    return tables
+
 
 # ---------------------------------------------------------------------------
 # Excel export
 # ---------------------------------------------------------------------------
 
-def save_sections_to_excel(pdf_path: str, sections: Dict[str, Tuple[int, int]], output: Path) -> None:
+def pages_range(start: int, end: int) -> List[int]:
+    return list(range(start, end + 1))
+
+
+def save_sections_to_excel(
+    pdf_path: str, sections: Dict[str, Tuple[int, int]], output: Path
+) -> None:
+    """Extract the configured sections and write them to ``output``."""
+
     with pd.ExcelWriter(output) as writer:
-        for section, (start, end) in sections.items():
-            page_list = pages_range(start, end)
-            if is_scanned(pdf_path, page_list):
-                logger.info("Section %s appears scanned. Using OCR.", section)
-                tables = extract_tables_ocr(pdf_path, page_list)
+        for name, (start, end) in sections.items():
+            pages = pages_range(start, end)
+            if is_scanned(pdf_path, pages):
+                logger.info("Section %s appears scanned. Using OCR.", name)
+                tables = extract_tables_ocr(pdf_path, pages)
             else:
-                pages = f"{start}-{end}"
-                logger.info("Extracting section %s pages %s", section, pages)
+                logger.info("Extracting section %s pages %s", name, pages)
                 tables = extract_tables_text(pdf_path, pages)
 
             if not tables:
-                logger.warning("No tables found for section %s", section)
+                logger.warning("No tables found for section %s", name)
                 continue
 
-            for idx, tbl in enumerate(tables, 1):
-                sheet = f"{section}_{idx}"
-                tbl.to_excel(writer, sheet_name=sheet, index=False, header=False)
-                logger.info("Saved %s (%d rows)", sheet, len(tbl))
+            # One sheet per section
+            combined = pd.concat(tables, ignore_index=True)
+            combined.to_excel(writer, sheet_name=name, index=False, header=False)
+            logger.info("Saved %s (%d rows)", name, len(combined))
+
 
 # ---------------------------------------------------------------------------
 # CLI entry
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Example usage: update these paths/ranges for your PDFs.
-    #PDF_FILE = "C:\\Users\\jaotr\\OneDrive\\Documentos\\itau_am\\py_table_scammer\\ITRs DFPs non-CVM\\matrixITR.pdf"  # path to your PDF
-    PDF_FILE = "C:\\Users\\jaotr\\OneDrive\\Documentos\\itau_am\\py_table_scammer\\ITRs DFPs non-CVM\\aegea_corsanITR.pdf"  # path to your PDF
+    PDF_FILE = "vibraITR.pdf"
     SECTIONS = {
-        "BP": (15, 15),
-        # Add other sections with their page ranges, e.g.:
-        "DRE": (16, 16),
-        "DFC": (19, 19),
+        "BP": (3, 3),
+        "DRE": (4, 4),
+        "DFC": (7, 7),
     }
     pdf_path = Path(PDF_FILE)
     out_path = pdf_path.with_name(f"{pdf_path.stem}_tables.xlsx")
+
     try:
-        save_sections_to_excel(PDF_FILE, SECTIONS, out_path)
+        save_sections_to_excel(str(pdf_path), SECTIONS, out_path)
         logger.info("Tables written to %s", out_path)
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # pragma: no cover - entry diagnostics
         logger.error("Failed to extract tables: %s", exc)
 
