@@ -199,12 +199,12 @@ def save_sections_to_excel(pdf_path: str, sections: Dict[str, Tuple[int, int]], 
 if __name__ == "__main__":
     # Example usage: update these paths/ranges for your PDFs.
     #PDF_FILE = "C:\\Users\\jaotr\\OneDrive\\Documentos\\itau_am\\py_table_scammer\\ITRs DFPs non-CVM\\matrixITR.pdf"  # path to your PDF
-    PDF_FILE = "C:\\Users\\jaotr\\OneDrive\\Documentos\\itau_am\\py_table_scammer\\ITRs DFPs non-CVM\\aegea_corsanITR.pdf"  # path to your PDF
+    PDF_FILE = "C:\\Users\\jaotr\\OneDrive\\Documentos\\itau_am\\py_table_scammer\\ITRs DFPs non-CVM\\vibraITR.pdf"  # path to your PDF
     SECTIONS = {
-        "BP": (15, 15),
+        "BP": (3, 3),
         # Add other sections with their page ranges, e.g.:
-        "DRE": (16, 16),
-        "DFC": (19, 19),
+        "DRE": (4, 4),
+        "DFC": (7, 7),
     }
     pdf_path = Path(PDF_FILE)
     out_path = pdf_path.with_name(f"{pdf_path.stem}_tables.xlsx")
