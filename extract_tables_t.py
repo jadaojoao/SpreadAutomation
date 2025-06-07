@@ -19,6 +19,7 @@ import unicodedata
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple, Union
 
+
 import pandas as pd
 from tabula import read_pdf
 import pdfplumber
@@ -36,9 +37,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 REGEX_INVISIBLES = re.compile(r"[\u200b\u200e\u202f\xa0]")
 
-
 def clean_and_split_cell(cell: Union[str, float, int]) -> Union[str, float, int]:
     """Clean and split concatenated or malformed cell content."""
+
     if not isinstance(cell, str):
         return cell
 
