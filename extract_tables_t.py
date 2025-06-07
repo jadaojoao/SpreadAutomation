@@ -1,5 +1,12 @@
 
-#This script extracts tables from a PDF file using the tabula-py library, cleans and splits the data, and saves it to an Excel file.
+#This script extracts tables from a PDF file using the tabula-py library, cleans and splits the data, and saves iamic extraction if needed
+#pdf_name = "vibraITR"  # Replace with dynamic extraction if needed
+#pdf_name = "vibraITR"  # Replace with dynamic extraction if needed
+
+import re
+from typing import Union
+
+def clean_and_split_cell(cell: Union[str, t to an Excel file.
 
 import pandas as pd
 from tabula import read_pdf
@@ -18,14 +25,7 @@ end_page = 10  # Change this to the ending page number
 # Extract the PDF file name without extension
 #pdf_name = "vibraITR"  # Replace with dynamic extraction if needed
 pdf_name = "matrixITR"  # Replace with dynamic extraction if needed
-#pdf_name = "vibraITR"  # Replace with dynamic extraction if needed
-#pdf_name = "vibraITR"  # Replace with dynamic extraction if needed
-#pdf_name = "vibraITR"  # Replace with dynamic extraction if needed
-
-import re
-from typing import Union
-
-def clean_and_split_cell(cell: Union[str, float, int]) -> Union[str, float, int]:
+#pdf_name = "vibraITR"  # Replace with dynfloat, int]) -> Union[str, float, int]:
     """
     Cleans and splits concatenated or improperly formatted content in a cell.
 
