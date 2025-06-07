@@ -1,14 +1,8 @@
 """extract_tables_t.py
 ----------------------
-Improved table extraction from corporate PDF reports.
+Enhanced extraction of financial tables from corporate PDF reports.
 
-Features:
-- Detects whether pages are text-based or scanned images.
-- Uses Tabula on text-based pages and Tesseract OCR as a fallback.
-- Cleans and splits merged cells using regex heuristics.
-- Saves each extracted table into an Excel workbook with a sheet per
-  report section (BP, DRE, DFC).
-- Provides logging and error handling for easier troubleshooting.
+The script keeps ``tabula`` as the preferred backend whenever available and falls back to ``pdfplumber`` or OCR (Tesseract) for scanned pages. Column headers and year references are preserved, multi line descriptions are merged and recurring footer notes are removed. Each section (BP, DRE and DFC) is exported to its own sheet in the resulting workbook.
 """
 
 from __future__ import annotations
@@ -21,10 +15,24 @@ from typing import Dict, Iterable, List, Tuple, Union
 
 
 import pandas as pd
-from tabula import read_pdf
-import pdfplumber
-from pdf2image import convert_from_path
-import pytesseract
+try:  # optional dependencies
+    from tabula import read_pdf
+    TABULA_AVAILABLE = True
+except Exception:  # pragma: no cover - not installed in some environments
+    TABULA_AVAILABLE = False
+    read_pdf = None
+
+try:
+    import pdfplumber  # type: ignore
+except Exception:  # pragma: no cover
+    pdfplumber = None
+
+try:
+    from pdf2image import convert_from_path  # type: ignore
+    import pytesseract  # type: ignore
+except Exception:  # pragma: no cover
+    convert_from_path = None
+    pytesseract = None
 
 # ---------------------------------------------------------------------------
 # Logging configuration
@@ -36,81 +44,99 @@ logger = logging.getLogger(__name__)
 # Cleaning helpers (similar to the previous version)
 # ---------------------------------------------------------------------------
 REGEX_INVISIBLES = re.compile(r"[\u200b\u200e\u202f\xa0]")
+FOOTER_PATTERN = re.compile(r"accompanying notes", re.I)
 
-def clean_and_split_cell(cell: Union[str, float, int]) -> Union[str, float, int]:
-    """Clean and split concatenated or malformed cell content."""
+def clean_cell(cell: Union[str, float, int]) -> Union[str, float, int]:
+    """Normalize basic whitespace and invisible characters."""
 
     if not isinstance(cell, str):
         return cell
 
     cell = unicodedata.normalize("NFKC", cell)
     cell = REGEX_INVISIBLES.sub("", cell).strip()
+    return cell
 
-    cell = re.sub(r"(\d+)\s*-\s*$", r"\1;-", cell)
-    cell = re.sub(r"(-?\d+)\s+-\b", r"\1;-", cell)
-    cell = re.sub(r"-\s+(-?\d+)", r"-;\1", cell)
-    cell = re.sub(
-        r"(?<![\d/])(\d{1,3}(?:\.\d{3})*|\d+)\s+(\d{1,3}(?:\.\d{3})*|\d+)(?![\d/])",
-        r"\1;\2",
-        cell,
+
+def remove_footer_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop rows that contain recurring footer notes."""
+
+    if df.empty:
+        return df
+
+    mask = df.apply(
+        lambda r: r.astype(str).str.contains(FOOTER_PATTERN).any(), axis=1
     )
-    cell = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", cell)
-    cell = re.sub(r"([a-z])([A-Z])", r"\1 \2", cell)
-    cell = re.sub(r"(?<=[a-zA-Z])(?=\d)", " ", cell)
-    cell = re.sub(r"(?<=\d)(?=\d{3}\b)", " ", cell)
-    cell = re.sub(r"(\d{2})\s*/\s*(\d{2})\s*/\s*(\d{4})", r"\1/\2/\3", cell)
-    cell = re.sub(r"(\d)\s+(\d{3})", r"\1\2", cell)
-    cell = re.sub(r"(\d{4})\s+(\d{4})", r"\1;\2", cell)
-    cell = re.sub(r"(\d{3})(\d\.\d{3})", r"\1;\2", cell)
-    cell = re.sub(r"(\d{1,3}(?:\.\d{3})+)(\d{3})\b", r"\1;\2", cell)
-    cell = re.sub(r"(\d+\.\d{3})(\d{3}\b)", r"\1;\2", cell)
-    cell = re.sub(r"(\d+\.\d)\s+(\d{3}\.\d{3})", r"\1;\2", cell)
-    cell = re.sub(r"(\d{1,3}(?:\.\d{3})+)(\d{1,3}(?:\.\d{3})+)", r"\1;\2", cell)
-    cell = re.sub(r"\((\d+\.\d{3})\)\s+\((\d+\.\d{3})\)", r"(\1);(\2)", cell)
-    cell = re.sub(r"\((\d+)\)\s+\((\d+)\)", r"(\1);(\2)", cell)
-    cell = re.sub(r"\((\d+)\)\s+(\d+)", r"(\1);\2", cell)
-    cell = re.sub(r"(\d+)\s+\((\d+)\)", r"\1;(\2)", cell)
-    cell = re.sub(r"(\d+)\s+\((\d+\.\d{3})\)", r"\1;(\2)", cell)
-    cell = re.sub(r"\((\d+\.\d{3})\)\s+(\d+)", r"(\1);\2", cell)
-    cell = re.sub(r"\((\d+)\)\((\d+\.\d{3})\)", r"\1;(\2)", cell)
-    cell = re.sub(r"\((\d+\.\d{3})\)\((\d+\.\d{3})\)", r"(\1);(\2)", cell)
-    cell = re.sub(r"\((\d+\.\d{3})\)\((\d+)\)", r"(\1);(\2)", cell)
-    cell = re.sub(r"\((\d+)\)\((\d+)\)", r"\1;(\2)", cell)
-    cell = re.sub(r"(\d+)\((\d+\.\d{3})\)", r"\1;(\2)", cell)
-    cell = re.sub(r"\((\d+(?:\.\d{3})?)\)", r"-\1", cell)
-    cell = re.sub(r"([a-zA-Z]+)\s*(\d{1,3})\b", r"\1;\2", cell)
-    cell = re.sub(r"(-?\d+)\s+-\b", r"\1;-", cell)
-    return cell.strip()
+    return df[~mask].reset_index(drop=True)
+
+
+def merge_header_rows(df: pd.DataFrame, header_rows: int = 2) -> pd.DataFrame:
+    """Combine the first ``header_rows`` into a single header row."""
+
+    if df.empty:
+        return df
+
+    parts = df.iloc[:header_rows].fillna("")
+    headers = [
+        " ".join(filter(None, parts[col].astype(str).str.strip().tolist()))
+        for col in parts.columns
+    ]
+    body = df.iloc[header_rows:].reset_index(drop=True)
+    body.columns = headers[: body.shape[1]]
+    return body
+
+
+def merge_multiline_labels(df: pd.DataFrame, label_col: int = 0) -> pd.DataFrame:
+    """Merge rows where the label column is split across lines."""
+
+    if df.empty:
+        return df
+
+    rows: List[List[Union[str, float, int]]] = []
+    buffer: List[Union[str, float, int]] | None = None
+
+    for _, row in df.iterrows():
+        label = row[label_col]
+        if pd.isna(label) and buffer is not None:
+            txt = " ".join(
+                str(row[c]) for c in df.columns if c != label_col and not pd.isna(row[c])
+            )
+            buffer[label_col] = f"{buffer[label_col]} {txt}".strip()
+        else:
+            if buffer is not None:
+                rows.append(buffer)
+            buffer = row.tolist()
+
+    if buffer is not None:
+        rows.append(buffer)
+
+    return pd.DataFrame(rows, columns=df.columns)
 
 
 def preprocess_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply :func:`clean_cell` to every element of ``df``."""
+
     for col in df.columns:
-        df[col] = df[col].apply(clean_and_split_cell)
+        df[col] = df[col].apply(clean_cell)
     return df
 
 
-def manually_split_columns(df: pd.DataFrame) -> pd.DataFrame:
-    for col in df.columns:
-        if df[col].dtype == "object":
-            df[col] = df[col].apply(
-                lambda x: re.split(r"(?<=\d{3})(?=\d{3})", x)
-                if isinstance(x, str) and re.search(r"\d{3}\d{3}", x)
-                else x
-            )
-            df[col] = df[col].apply(lambda x: ";".join(x) if isinstance(x, list) else x)
-    return df
+def parse_pages(pages: str) -> List[int]:
+    """Expand a page specification like ``"1,3-5"`` to a list of numbers."""
 
-
-def split_semicolon_values(df: pd.DataFrame) -> pd.DataFrame:
-    new_cols: List[pd.DataFrame] = []
-    for col in df.columns:
-        if df[col].dtype == "object" and df[col].str.contains(";").any():
-            split_data = df[col].str.split(";", expand=True)
-            split_data.columns = [f"{col}_{i+1}" for i in range(split_data.shape[1])]
-            new_cols.append(split_data)
+    result: List[int] = []
+    for part in pages.split(','):
+        part = part.strip()
+        if not part:
+            continue
+        if '-' in part:
+            a, b = part.split('-', 1)
+            result.extend(range(int(a), int(b) + 1))
         else:
-            new_cols.append(df[[col]])
-    return pd.concat(new_cols, axis=1)
+            result.append(int(part))
+    return result
+
+
+
 
 # ---------------------------------------------------------------------------
 # Detection helpers
@@ -138,25 +164,48 @@ def is_scanned(pdf_path: str, pages: Iterable[int]) -> bool:
 # ---------------------------------------------------------------------------
 
 def extract_tables_text(pdf_path: str, pages: str) -> List[pd.DataFrame]:
-    try:
-        tables = read_pdf(
-            pdf_path,
-            pages=pages,
-            multiple_tables=True,
-            stream=True,
-            pandas_options={"header": None},
-        )
-        return [preprocess_table(manually_split_columns(split_semicolon_values(t))) for t in tables]
-    except Exception as exc:
-        logger.error("Tabula extraction failed: %s", exc)
-        return []
+    """Extract tables using Tabula or ``pdfplumber``."""
+
+    tables: List[pd.DataFrame] = []
+    if TABULA_AVAILABLE:
+        try:
+            tables = read_pdf(
+                pdf_path,
+                pages=pages,
+                multiple_tables=True,
+                stream=True,
+                pandas_options={"header": None},
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.error("Tabula extraction failed: %s", exc)
+
+    if not tables and pdfplumber:
+        for p in parse_pages(pages):
+            with pdfplumber.open(pdf_path) as pdf:
+                if p - 1 >= len(pdf.pages):
+                    continue
+                page = pdf.pages[p - 1]
+                for tb in page.extract_tables():
+                    tables.append(pd.DataFrame(tb))
+
+    return [merge_multiline_labels(merge_header_rows(remove_footer_rows(preprocess_table(t)))) for t in tables]
 
 
 def extract_tables_ocr(pdf_path: str, page_numbers: Iterable[int]) -> List[pd.DataFrame]:
+    """Fallback OCR extraction using ``pdf2image`` and ``pytesseract``."""
+
     results: List[pd.DataFrame] = []
+    if convert_from_path is None or pytesseract is None:
+        logger.error("OCR dependencies are missing")
+        return results
+
     try:
-        images = convert_from_path(pdf_path, first_page=min(page_numbers), last_page=max(page_numbers))
-    except Exception as exc:
+        images = convert_from_path(
+            pdf_path,
+            first_page=min(page_numbers),
+            last_page=max(page_numbers),
+        )
+    except Exception as exc:  # pragma: no cover
         logger.error("Failed to render pages for OCR: %s", exc)
         return results
 
@@ -165,7 +214,11 @@ def extract_tables_ocr(pdf_path: str, page_numbers: Iterable[int]) -> List[pd.Da
         rows = [re.split(r"\s{2,}", ln.strip()) for ln in text.splitlines() if ln.strip()]
         if rows:
             df = pd.DataFrame(rows)
-            results.append(preprocess_table(manually_split_columns(split_semicolon_values(df))))
+            df = preprocess_table(df)
+            df = remove_footer_rows(df)
+            df = merge_header_rows(df)
+            df = merge_multiline_labels(df)
+            results.append(df)
     return results
 
 # ---------------------------------------------------------------------------
@@ -173,6 +226,8 @@ def extract_tables_ocr(pdf_path: str, page_numbers: Iterable[int]) -> List[pd.Da
 # ---------------------------------------------------------------------------
 
 def save_sections_to_excel(pdf_path: str, sections: Dict[str, Tuple[int, int]], output: Path) -> None:
+    """Extract each section and store it in ``output``."""
+
     with pd.ExcelWriter(output) as writer:
         for section, (start, end) in sections.items():
             page_list = pages_range(start, end)
@@ -188,28 +243,25 @@ def save_sections_to_excel(pdf_path: str, sections: Dict[str, Tuple[int, int]], 
                 logger.warning("No tables found for section %s", section)
                 continue
 
-            for idx, tbl in enumerate(tables, 1):
-                sheet = f"{section}_{idx}"
-                tbl.to_excel(writer, sheet_name=sheet, index=False, header=False)
-                logger.info("Saved %s (%d rows)", sheet, len(tbl))
+            combined = pd.concat(tables, ignore_index=True) if len(tables) > 1 else tables[0]
+            combined.to_excel(writer, sheet_name=section, index=False)
+            logger.info("Saved %s (%d rows)", section, len(combined))
 
 # ---------------------------------------------------------------------------
 # CLI entry
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Example usage: update these paths/ranges for your PDFs.
-    #PDF_FILE = "C:\\Users\\jaotr\\OneDrive\\Documentos\\itau_am\\py_table_scammer\\ITRs DFPs non-CVM\\matrixITR.pdf"  # path to your PDF
-    PDF_FILE = "C:\\Users\\jaotr\\OneDrive\\Documentos\\itau_am\\py_table_scammer\\ITRs DFPs non-CVM\\vibraITR.pdf"  # path to your PDF
+    # Default example using the sample PDF shipped with the repository.
+    PDF_FILE = Path("vibraITR.pdf")
     SECTIONS = {
         "BP": (3, 3),
-        # Add other sections with their page ranges, e.g.:
         "DRE": (4, 4),
         "DFC": (7, 7),
     }
-    pdf_path = Path(PDF_FILE)
-    out_path = pdf_path.with_name(f"{pdf_path.stem}_tables.xlsx")
+
+    out_path = PDF_FILE.with_name(f"{PDF_FILE.stem}_tables.xlsx")
     try:
-        save_sections_to_excel(PDF_FILE, SECTIONS, out_path)
+        save_sections_to_excel(str(PDF_FILE), SECTIONS, out_path)
         logger.info("Tables written to %s", out_path)
     except Exception as exc:  # pragma: no cover
         logger.error("Failed to extract tables: %s", exc)
