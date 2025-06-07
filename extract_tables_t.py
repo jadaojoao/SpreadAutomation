@@ -2,8 +2,11 @@
 ----------------------
 Utility to extract financial tables from PDF reports.
 
-The module uses ``pdfplumber`` for text based pages and falls back to
-OCR via ``pdf2image`` and ``pytesseract`` when no text is detected.
+Tabula is used on text based pages while pdfplumber only inspects pages
+to detect whether they contain selectable text.  If no text is found,
+the script falls back to OCR via ``pdf2image`` and ``pytesseract``.  Each
+report section (Balance Sheet, Income Statement and Cash Flow Statement)
+is saved to a dedicated sheet in the resulting Excel file.
 Each report section (Balance Sheet, Income Statement and Cash Flow
 Statement) is saved to a dedicated sheet in the resulting Excel file.
 
@@ -23,6 +26,7 @@ import unicodedata
 
 import pandas as pd
 import pdfplumber
+from tabula import read_pdf
 from pdf2image import convert_from_path
 import pytesseract
 
@@ -73,7 +77,7 @@ def merge_multiline_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def clean_table(df: pd.DataFrame) -> pd.DataFrame:
-    """Basic clean-up of a pdfplumber table."""
+    """Basic clean-up of extracted tables."""
 
     df = df.applymap(normalise_cell)
     df.dropna(axis=0, how="all", inplace=True)
@@ -110,25 +114,27 @@ def is_scanned(pdf_path: str, pages: Iterable[int]) -> bool:
 # ---------------------------------------------------------------------------
 
 def extract_tables_text(pdf_path: str, page_numbers: Iterable[int]) -> List[pd.DataFrame]:
-    """Extract tables from the given pages using pdfplumber."""
+    """Extract tables from ``page_numbers`` using Tabula."""
+
+    page_spec = ",".join(str(p) for p in page_numbers)
+    try:
+        tables = read_pdf(
+            pdf_path,
+            pages=page_spec,
+            multiple_tables=True,
+            stream=True,
+            guess=True,
+            pandas_options={"header": None},
+        )
+    except Exception as exc:  # pragma: no cover - extraction diagnostics
+        logger.error("Tabula extraction failed: %s", exc)
+        return []
+
     results: List[pd.DataFrame] = []
-    with pdfplumber.open(pdf_path) as pdf:
-        for pno in page_numbers:
-            if pno - 1 >= len(pdf.pages):
-                continue
-            page = pdf.pages[pno - 1]
-            tables = page.extract_tables(
-                {
-                    "vertical_strategy": "lines",
-                    "horizontal_strategy": "lines",
-                    "intersection_tolerance": 5,
-                }
-            )
-            for tb in tables:
-                df = pd.DataFrame(tb)
-                df = clean_table(df)
-                if not df.empty:
-                    results.append(df)
+    for df in tables:
+        df = clean_table(df)
+        if not df.empty:
+            results.append(df)
     return results
 
 
