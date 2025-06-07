@@ -16,6 +16,12 @@ except Exception:
     read_pdf = None
 
 try:
+    import camelot
+    CAMELOT_AVAILABLE = True
+except Exception:
+    CAMELOT_AVAILABLE = False
+
+try:
     import pdfplumber
 except Exception:
     pdfplumber = None
@@ -38,6 +44,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 REGEX_INVISIBLES = re.compile(r"[\u200b\u200e\u202f\xa0]")
 FOOTER_PATTERN = re.compile(r"accompanying notes", re.I)
+NUM_PATTERN = re.compile(r"^-?\d[\d\.,]*$")
 
 
 def clean_cell(cell: Union[str, float, int]) -> Union[str, float, int]:
@@ -59,10 +66,12 @@ def remove_footer_rows(df: pd.DataFrame) -> pd.DataFrame:
     return df[~mask].reset_index(drop=True)
 
 
-def merge_header_rows(df: pd.DataFrame, header_rows: int = 2) -> pd.DataFrame:
+def merge_header_rows(df: pd.DataFrame, header_rows: int | None = None) -> pd.DataFrame:
     """Funde as primeiras linhas do cabeçalho em uma única linha."""
     if df.empty:
         return df
+    if header_rows is None:
+        header_rows = guess_header_rows(df)
     parts = df.iloc[:header_rows].fillna("")
     headers = [
         " ".join(filter(None, parts[col].astype(str).str.strip().tolist()))
@@ -83,15 +92,17 @@ def merge_multiline_labels(df: pd.DataFrame, label_col: int = 0) -> pd.DataFrame
 
     for _, row in df.iterrows():
         label = row.iloc[label_col]
-        if pd.isna(label) and buffer is not None:
-            txt = " ".join(
-                str(v) for j, v in enumerate(row) if j != label_col and not pd.isna(v)
-            )
-            buffer[label_col] = f"{buffer[label_col]} {txt}".strip()
+        if pd.isna(label) or not row.drop(df.columns[label_col]).dropna().any():
+            txt = " ".join(str(v) for v in row if isinstance(v, str) and v)
+            if buffer is None:
+                buffer = [txt] + [None] * (len(df.columns) - 1)
+            else:
+                buffer[label_col] = f"{buffer[label_col]} {txt}".strip()
         else:
             if buffer is not None:
                 rows.append(buffer)
-            buffer = row.tolist()
+                buffer = None
+            rows.append(row.tolist())
 
     if buffer is not None:
         rows.append(buffer)
@@ -102,7 +113,18 @@ def merge_multiline_labels(df: pd.DataFrame, label_col: int = 0) -> pd.DataFrame
 def preprocess_table(df: pd.DataFrame) -> pd.DataFrame:
     for col in df.columns:
         df[col] = df[col].apply(clean_cell)
+    df = df.dropna(how="all").reset_index(drop=True)
+    df = df.dropna(axis=1, how="all")
     return df
+
+
+def guess_header_rows(df: pd.DataFrame, max_rows: int = 5) -> int:
+    for i, row in df.iterrows():
+        if i >= max_rows:
+            break
+        if any(NUM_PATTERN.fullmatch(str(v)) for v in row if isinstance(v, str)):
+            return i
+    return max_rows
 
 
 def parse_pages(pages: str) -> List[int]:
@@ -158,6 +180,16 @@ def extract_tables_text(pdf_path: str, pages: str) -> List[pd.DataFrame]:
         except Exception as exc:
             logger.error("Tabula extraction failed: %s", exc)
 
+    def bad_result(ts: List[pd.DataFrame]) -> bool:
+        return not ts or all(t.empty or t.shape[1] > 10 for t in ts)
+
+    if bad_result(tables) and CAMELOT_AVAILABLE:
+        try:
+            cam = camelot.read_pdf(pdf_path, pages=pages, flavor="stream")
+            tables = [tb.df for tb in cam]
+        except Exception as exc:
+            logger.error("Camelot extraction failed: %s", exc)
+
     if not tables and pdfplumber:
         for p in parse_pages(pages):
             with pdfplumber.open(pdf_path) as pdf:
@@ -167,14 +199,7 @@ def extract_tables_text(pdf_path: str, pages: str) -> List[pd.DataFrame]:
                 for tb in page.extract_tables():
                     tables.append(pd.DataFrame(tb))
 
-    return [
-        merge_multiline_labels(
-            merge_header_rows(
-                remove_footer_rows(preprocess_table(t))
-            )
-        )
-        for t in tables
-    ]
+    return [merge_multiline_labels(merge_header_rows(remove_footer_rows(preprocess_table(t)))) for t in tables]
 
 
 def extract_tables_ocr(pdf_path: str, page_numbers: Iterable[int]) -> List[pd.DataFrame]:
@@ -228,7 +253,15 @@ def save_sections_to_excel(pdf_path: str, sections: Dict[str, Tuple[int, int]], 
                 logger.warning("No tables found for section %s", section)
                 continue
 
-            combined = pd.concat(tables, ignore_index=True) if len(tables) > 1 else tables[0]
+            if len(tables) > 1:
+                cols = []
+                for tb in tables:
+                    if len(tb.columns) > len(cols):
+                        cols = list(tb.columns)
+                tables = [tb.reindex(columns=cols) for tb in tables]
+                combined = pd.concat(tables, ignore_index=True)
+            else:
+                combined = tables[0]
             combined.to_excel(writer, sheet_name=section, index=False)
             logger.info("Saved %s (%d rows)", section, len(combined))
             wrote_anything = True
