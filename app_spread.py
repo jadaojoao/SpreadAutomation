@@ -1,15 +1,16 @@
-# app_spread.py · v2 (Com o git e code agente ChatGPT)
+# app_spread.py · v3 (Interface em Português e Otimizada)
 # --------------------------------------------------------------------
+# • Interface 100% em Português.
+# • Linhas de início (geral e DRE) fixas em 27 e 150.
+# • Pasta de saída da "Origem Tratada" é a mesma da origem.
+# • Extrai a planilha "DMPL Ultimo".
 # • Coluna-origem / destino por LETRA ou índice
-# • Linha inicial global  +  Linha inicial DRE (trimestre)
 # • Cabeçalhos corretos para ano × trimestre
 # • DRE trimestral: linhas mapeadas manualmente
 # • Atualiza planilha ABERTA via xlwings; fallback openpyxl
 # • Destaca valores usados na origem tratada
 # • Depreciação/Amortização na DFC trimestral negativa
 # pip install openpyxl xlwings customtkinter pandas
-# pip install -U customtkinter  # se necessário
-# test com Python 3.10+ e xlwings >= 0.30.0
 # --------------------------------------------------------------------
 import logging
 import re
@@ -37,7 +38,7 @@ except ImportError:
 
 
 def normaliza_num(v) -> int | None:
-    """Normalize a string or number to an integer or None."""
+    """Normaliza um texto ou número para um inteiro ou None."""
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
     if isinstance(v, (int, float)):
@@ -50,14 +51,14 @@ def normaliza_num(v) -> int | None:
 
 
 def periodos(p: str) -> Tuple[str, str, str, bool]:
-    """Return (current, previous, pre-previous, is_trimester)."""
+    """Retorna (atual, anterior, ante-anterior, is_trimestre)."""
     p = p.upper().strip()
     if re.fullmatch(r"\d{4}", p):
         a = int(p)
         return str(a), str(a - 1), str(a - 2), False
     m = re.fullmatch(r"([1-4])T(\d{2})", p)
     if not m:
-        raise ValueError("Period must be YYYY or QTYY (e.g., 2024 or 1T25).")
+        raise ValueError("Período deve ser AAAA ou nTAA (ex.: 2024 ou 1T25).")
     tri, aa = int(m.group(1)), int(m.group(2))
     f = lambda y: f"{tri}T{y:02d}"
     return f(aa), f(aa - 1), f(aa - 2), True
@@ -81,8 +82,8 @@ def prepara_origem(
     out_dir: Path | None,
 ) -> Path:
     """
-    Create <file>_tratado.xlsx (or .xlsm) without overwriting the
-    original file and return the generated Path.
+    Cria <arquivo>_tratado.xlsx (ou .xlsm) sem sobrescrever o
+    arquivo original e devolve o Path gerado.
     """
     dst_dir = out_dir or path.parent
     dst_dir.mkdir(parents=True, exist_ok=True)
@@ -94,6 +95,7 @@ def prepara_origem(
             "DF Cons Passivo": "cons passivos",
             "DF Cons Resultado Periodo": "cons DRE",
             "DF Cons Fluxo de Caixa": "cons DFC",
+            "DF Cons Demonstracao Mutr Patrimônio Líquido": "DMPL Ultimo",
         },
         "individual": {
             "DF Ind Ativo": "ind ativos",
@@ -161,7 +163,7 @@ def prepara_origem(
 
 
 def shift_formula(f: str, delta: int) -> str:
-    """Shift column references in a formula by a given delta."""
+    """Desloca referências de colunas em uma fórmula por um delta."""
     pat = re.compile(
         r"(?<![A-Za-z0-9_])(?:'[^']+'|[A-Za-z0-9_]+)?!"
         r"|(?<![A-Za-z0-9_])(\$?)([A-Za-z]{1,3})(?=\$?\d|:)",
@@ -184,7 +186,7 @@ def shift_formula(f: str, delta: int) -> str:
 def adjust_complex_formula(
     formula: str, delta: int, map_number, used_vals: set[int] | None = None
 ) -> str:
-    """Adjust a complex formula by shifting columns and mapping numbers."""
+    """Ajusta uma fórmula complexa deslocando colunas e mapeando números."""
     num_pat = re.compile(r"(?<![A-Za-z])[-+]?\d[\d\.,]*")
     f2 = shift_formula(formula, delta)
 
@@ -203,7 +205,7 @@ def adjust_complex_formula(
 def valor_corresp(
     abas: Dict[str, pd.DataFrame], n: int, prev: str, curr: str
 ) -> int | None:
-    """Find the corresponding value for a number in the source sheets."""
+    """Encontra o valor correspondente para um número nas planilhas de origem."""
     for df in abas.values():
         if prev not in df.columns or curr not in df.columns:
             continue
@@ -224,10 +226,7 @@ def atualizar_ws(
     ant: str,
     start_row: int,
 ) -> tuple[list[int], set[int], set[int]]:
-    """
-    Copy/adjust data from source to destination column and return skipped rows/values
-    and used values.
-    """
+    """Copia/ajusta dados da coluna de origem para a de destino."""
     c_src, c_dst = src_idx + 1, dst_idx + 1
     delta = c_dst - c_src
     skipped_rows, skipped_vals, used_vals = [], set(), set()
@@ -303,7 +302,7 @@ def aplicar_dre_manual(
     col_valor: str,
     is_xlwings: bool,
 ):
-    """Copy specific values from the quarterly DRE using DRE_MAP."""
+    """Copia valores específicos da DRE trimestral usando DRE_MAP."""
     for offset, desc in DRE_MAP.items():
         linha = dre_start + offset
         try:
@@ -327,7 +326,7 @@ def inserir_depreciacao_dfc(
     col_valor: str,
     is_xlwings: bool,
 ) -> int | None:
-    """Read Depreciation/Amortization from DFC and write it as a negative value."""
+    """Lê Depreciação/Amortização da DFC e grava como valor negativo."""
     if df_dfc is None or col_valor not in df_dfc.columns:
         return None
     desc = df_dfc["Descricao Conta"].astype(str)
@@ -351,7 +350,7 @@ def inserir_depreciacao_dfc(
 def destacar_inseridos(
     orig_tratada: Path, used_vals: set[int], atual: str, prefer_xlwings: bool = True
 ):
-    """Highlight cells in the source sheet that were successfully used."""
+    """Realça células na planilha de origem que foram usadas com sucesso."""
     if not used_vals:
         return
 
@@ -376,7 +375,7 @@ def destacar_inseridos(
             wb.save()
             return
         except Exception:
-            pass  # Fallback to openpyxl
+            pass  # Fallback para openpyxl
 
     wb = load_workbook(orig_tratada, keep_vba=orig_tratada.suffix.lower() == ".xlsm")
     fill, bold = PatternFill("solid", fgColor="CCFFCC"), Font(bold=True)
@@ -402,7 +401,7 @@ def processar(
     out_dir: Path | None = None,
     log: Callable[[str], None] = print,
 ) -> Path:
-    """Process the spreadsheet and highlight used/pending values in the source."""
+    """Processa a planilha e realça valores usados na origem."""
     src_idx, dst_idx = col_txt_to_idx(src_txt), col_txt_to_idx(dst_txt)
     atual, ant, ant2, is_trim = periodos(periodo)
     orig_path = prepara_origem(ori, tipo, atual, ant, ant2, is_trim, out_dir)
@@ -437,7 +436,7 @@ def processar(
             wb.app.calculate()
             wb.save()
         except Exception as exc:
-            log(f"xlwings failed, falling back: {exc}")
+            log(f"xlwings falhou, usando fallback: {exc}")
     else:
         is_xlsm = spr.suffix.lower() == ".xlsm"
         wb = load_workbook(spr, keep_vba=is_xlsm)
@@ -461,102 +460,67 @@ def processar(
         wb.save(spr)
 
     destacar_inseridos(orig_path, used_vals, atual, prefer_xlwings=XLWINGS)
-    log(f"Processed source saved to: {orig_path}")
+    log(f"Origem tratada salva em: {orig_path}")
     return spr
 
 
 class App(ctk.CTk):
-    """Main application GUI."""
+    """Interface gráfica principal da aplicação."""
 
     def __init__(self):
         super().__init__()
-        self.title("Spread Updater")
+        self.title("Atualizador de Spread")
         self.grid_columnconfigure((0, 1), weight=1)
 
         self.var_ori = ctk.StringVar()
-        self._campo_arquivo("Source File", 0, self.var_ori)
+        self._campo_arquivo("Arquivo Origem", 0, self.var_ori)
         self.var_spr = ctk.StringVar()
-        self._campo_arquivo("Spreadsheet File", 1, self.var_spr)
-        self.var_outdir = ctk.StringVar(value=str(Path.cwd()))
-        self._campo_dir("Processed Source Folder", 2, self.var_outdir)
+        self._campo_arquivo("Arquivo Spread", 1, self.var_spr)
 
         self.var_tipo = ctk.StringVar(value="consolidado")
-        ctk.CTkLabel(self, text="Type").grid(row=3, column=0, sticky="w", padx=4)
+        ctk.CTkLabel(self, text="Tipo").grid(row=2, column=0, sticky="w", padx=4, pady=(5,0))
         ctk.CTkOptionMenu(
             self, variable=self.var_tipo, values=["consolidado", "individual"]
-        ).grid(row=3, column=1, sticky="ew", padx=4)
+        ).grid(row=2, column=1, sticky="ew", padx=4, pady=(5,0))
 
         self.var_per = ctk.StringVar()
-        self._campo_txt("Period (2024 / 1T25)", 4, self.var_per)
+        self._campo_txt("Período (Ex: 2024 ou 1T25)", 3, self.var_per)
         self.var_src = ctk.StringVar(value="A")
-        self._campo_txt("Source Column (A or 0…)", 5, self.var_src, width=80)
+        self._campo_txt("Coluna Origem (A ou 0…)", 4, self.var_src, width=80)
         self.var_dst = ctk.StringVar(value="B")
-        self._campo_txt("Destination Column", 6, self.var_dst, width=80)
-        self.var_start = ctk.StringVar(value="27")
-        self._campo_txt("General Start Row", 7, self.var_start, width=80)
+        self._campo_txt("Coluna Destino", 5, self.var_dst, width=80)
 
-        self.var_dre = ctk.StringVar(value="150")
-        self.lbl_dre = ctk.CTkLabel(self, text="DRE Start Row (Revenue)")
-        self.ent_dre = ctk.CTkEntry(self, textvariable=self.var_dre, width=80)
-        self.var_per.trace_add("write", self._toggle_dre)
-
-        ctk.CTkButton(self, text="Process", command=self._run).grid(
-            row=10, column=0, pady=6, padx=4, sticky="ew"
+        ctk.CTkButton(self, text="Processar", command=self._run).grid(
+            row=10, column=0, pady=10, padx=4, sticky="ew"
         )
         ctk.CTkButton(
-            self, text="Exit", fg_color="gray", command=self.destroy
-        ).grid(row=10, column=1, pady=6, padx=4, sticky="ew")
+            self, text="Sair", fg_color="gray", command=self.destroy
+        ).grid(row=10, column=1, pady=10, padx=4, sticky="ew")
 
         self.log = ctk.CTkTextbox(self, width=600, height=150, state="disabled")
-        self.log.grid(row=11, column=0, columnspan=3, pady=6, padx=4)
-        
-        self._toggle_dre()
-
+        self.log.grid(row=11, column=0, columnspan=2, pady=(5,10), padx=4, sticky="ew")
 
     def _campo_arquivo(self, rotulo: str, linha: int, var: ctk.StringVar):
-        ctk.CTkLabel(self, text=rotulo).grid(row=linha, column=0, sticky="w", padx=4)
+        ctk.CTkLabel(self, text=rotulo).grid(row=linha, column=0, sticky="w", padx=4, pady=(5,0))
         ctk.CTkEntry(self, textvariable=var, width=420).grid(
-            row=linha, column=1, sticky="ew", padx=4
+            row=linha, column=1, sticky="ew", padx=4, pady=(5,0)
         )
-
-        def choose_file():
+        
+        def escolher_arquivo():
             f = filedialog.askopenfilename(
                 filetypes=[("Excel", "*.xlsx *.xlsm *.xls")]
             )
             if f:
                 var.set(f)
 
-        button = ctk.CTkButton(self, text="…", width=30, command=choose_file)
-        button.grid(row=linha, column=2, padx=2)
-
-    def _campo_dir(self, rotulo: str, linha: int, var: ctk.StringVar):
-        ctk.CTkLabel(self, text=rotulo).grid(row=linha, column=0, sticky="w", padx=4)
-        ctk.CTkEntry(self, textvariable=var, width=420).grid(
-            row=linha, column=1, sticky="ew", padx=4
-        )
-
-        def choose_dir():
-            d = filedialog.askdirectory()
-            if d:
-                var.set(d)
-
-        button = ctk.CTkButton(self, text="…", width=30, command=choose_dir)
-        button.grid(row=linha, column=2, padx=2)
+        button = ctk.CTkButton(self, text="…", width=30, command=escolher_arquivo)
+        button.grid(row=linha, column=2, padx=(2,4), pady=(5,0))
 
     def _campo_txt(self, rotulo: str, linha: int, var: ctk.StringVar, width=420):
-        ctk.CTkLabel(self, text=rotulo).grid(row=linha, column=0, sticky="w", padx=4)
+        ctk.CTkLabel(self, text=rotulo).grid(row=linha, column=0, sticky="w", padx=4, pady=(5,0))
         ctk.CTkEntry(self, textvariable=var, width=width).grid(
-            row=linha, column=1, sticky="w", padx=4
+            row=linha, column=1, sticky="w", padx=4, pady=(5,0)
         )
-
-    def _toggle_dre(self, *_):
-        is_trim = re.fullmatch(r"[1-4]T\d{2}", self.var_per.get().strip().upper())
-        if is_trim:
-            self.lbl_dre.grid(row=8, column=0, sticky="w", padx=4)
-            self.ent_dre.grid(row=8, column=1, sticky="w", padx=4)
-        else:
-            self.lbl_dre.grid_remove()
-            self.ent_dre.grid_remove()
 
     def _log(self, msg: str):
         self.log.configure(state="normal")
@@ -566,26 +530,29 @@ class App(ctk.CTk):
 
     def _run(self):
         try:
-            ori, spr = Path(self.var_ori.get()), Path(self.var_spr.get())
+            ori = Path(self.var_ori.get())
+            spr = Path(self.var_spr.get())
+
             if not (ori.exists() and spr.exists()):
-                self._log("Please select valid files.")
+                self._log("Por favor, selecione arquivos válidos.")
                 return
+                
             out_spread = processar(
-                ori,
-                spr,
-                self.var_tipo.get(),
-                self.var_per.get(),
-                self.var_src.get(),
-                self.var_dst.get(),
-                int(self.var_start.get()),
-                int(self.var_dre.get()),
-                out_dir=None,
+                ori=ori,
+                spr=spr,
+                tipo=self.var_tipo.get(),
+                periodo=self.var_per.get(),
+                src_txt=self.var_src.get(),
+                dst_txt=self.var_dst.get(),
+                start_row=27,
+                dre_start=150,
+                out_dir=None,  # Salva na mesma pasta do arquivo de origem
                 log=self._log,
             )
-            self._log(f"✔️ Finished: {out_spread}")
+            self._log(f"✔️ Processo finalizado: {out_spread}")
         except Exception as exc:
-            logging.exception("Processing failed")
-            self._log(f"Error: {exc}")
+            logging.exception("Ocorreu um erro no processamento")
+            self._log(f"Erro: {exc}")
 
 
 if __name__ == "__main__":
