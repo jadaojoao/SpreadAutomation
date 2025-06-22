@@ -243,10 +243,16 @@ def atualizar_ws(
     used_vals: Set[int] = set()
 
     num_pat = re.compile(r"[-+]?\d[\d\.,]*")
+    # determina corretamente o número de linhas, seja openpyxl ou xlwings
+    try:
+        max_row = ws.max_row
+    except AttributeError:
+        # xlwings Sheet não tem max_row
+        max_row = ws.cells.last_cell.row
+
     empty_streak = 0
     r = start_row
-
-    while empty_streak < 30 and r <= ws.max_row:  # tipo openpyxl
+    while empty_streak < 30 and r <= max_row:  # tipo openpyxl
         v = get_val(r, c_src)
         if v in (None, ""):
             empty_streak += 1
