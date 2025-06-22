@@ -1,9 +1,9 @@
-# app_spread.py · v3 (Interface em Português e Otimizada)
+# app_spread.py · v4 (Correção Mapeamento DMPL)
 # --------------------------------------------------------------------
+# • Mapeamento correto da aba DMPL (cons/ind).
 # • Interface 100% em Português.
 # • Linhas de início (geral e DRE) fixas em 27 e 150.
 # • Pasta de saída da "Origem Tratada" é a mesma da origem.
-# • Extrai a planilha "DMPL Ultimo".
 # • Coluna-origem / destino por LETRA ou índice
 # • Cabeçalhos corretos para ano × trimestre
 # • DRE trimestral: linhas mapeadas manualmente
@@ -95,13 +95,14 @@ def prepara_origem(
             "DF Cons Passivo": "cons passivos",
             "DF Cons Resultado Periodo": "cons DRE",
             "DF Cons Fluxo de Caixa": "cons DFC",
-            "DF Cons Demonstracao Mutr Patrimônio Líquido": "DMPL Ultimo",
+            "DF Cons DMPL Ultimo": "cons DMPL",
         },
         "individual": {
             "DF Ind Ativo": "ind ativos",
             "DF Ind Passivo": "ind passivos",
             "DF Ind Resultado Periodo": "ind DRE",
             "DF Ind Fluxo de Caixa": "ind DFC",
+            "DF Ind DMPL Ultimo": "ind DMPL",
         },
     }[tipo]
 
