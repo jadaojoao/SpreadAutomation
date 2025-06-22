@@ -1,10 +1,11 @@
-# app_spread.py · v6 (Otimização de Performance e Correção de Fórmulas)
+# app_spread.py · v6.1 (Correção de TypeError)
 # --------------------------------------------------------------------
-# • Otimização radical de performance ao pintar células na origem.
+# • Correção de TypeError no `load_workbook` na função `prepara_origem`.
+# • Otimização de performance ao pintar células na origem.
 # • Correção de bug crítico que impedia a atualização de fórmulas complexas.
 # • Lógica de execução (xlwings/openpyxl) mais robusta.
 # • Destaque com 2 cores: Verde (alterado) e Amarelo (novo, ex-zero).
-# • Relatório detalhado ao final do processo (alterados, novos, ignorados).
+# • Relatório detalhado ao final do processo.
 # • Interface 100% em Português.
 # --------------------------------------------------------------------
 import logging
@@ -120,10 +121,11 @@ def prepara_origem(
                     df = df.rename(columns=ren_factory(orig))
                     df.to_excel(wr, sheet_name=novo, index=False)
 
-    with load_workbook(dst_path) as wb:
-        if wb.sheetnames:
-            wb[wb.sheetnames[0]].sheet_state = "visible"
-        wb.save(dst_path)
+    # Bloco corrigido: removido o 'with' que causava o TypeError
+    wb = load_workbook(dst_path)
+    if wb.sheetnames:
+        wb.active.sheet_state = "visible"
+    wb.save(dst_path)
 
     return dst_path
 
