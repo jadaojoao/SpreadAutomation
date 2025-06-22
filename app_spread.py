@@ -1,27 +1,25 @@
-# app_spread.py · v4 (Correção Mapeamento DMPL)
+# app_spread.py · v4 (com mapa DMPL e destaque completo)
 # --------------------------------------------------------------------
-# • Mapeamento correto da aba DMPL (cons/ind).
-# • Interface 100% em Português.
-# • Linhas de início (geral e DRE) fixas em 27 e 150.
-# • Pasta de saída da "Origem Tratada" é a mesma da origem.
-# • Coluna-origem / destino por LETRA ou índice
-# • Cabeçalhos corretos para ano × trimestre
-# • DRE trimestral: linhas mapeadas manualmente
-# • Atualiza planilha ABERTA via xlwings; fallback openpyxl
-# • Destaca valores usados na origem tratada
-# • Depreciação/Amortização na DFC trimestral negativa
-# pip install openpyxl xlwings customtkinter pandas
+# • Mapeamento correto das abas (DF Cons/Ind + DMPL)
+# • Cabeçalhos distintos para ano × trimestre
+# • DRE trimestral mapeado manualmente
+# • Depreciação/Amortização negativa na DFC
+# • Atualização ao vivo com xlwings; fallback openpyxl
+# • Destaque em verde dos valores usados (used_vals)
+# • Destaque em amarelo de todos os valores que apareceram no Spread
+# • Relatório de linhas pendentes na GUI
 # --------------------------------------------------------------------
+from __future__ import annotations
 import logging
 import re
 import sys
 import tempfile
 from pathlib import Path
-from tkinter import filedialog
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Set, Tuple
 
 import customtkinter as ctk
 import pandas as pd
+from tkinter import filedialog
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import (
@@ -31,14 +29,13 @@ from openpyxl.utils import (
 
 try:
     import xlwings as xw
-
     XLWINGS = True
 except ImportError:
     XLWINGS = False
 
 
 def normaliza_num(v) -> int | None:
-    """Normaliza um texto ou número para um inteiro ou None."""
+    """Normaliza um valor numérico ou texto para inteiro, ou retorna None."""
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
     if isinstance(v, (int, float)):
@@ -51,7 +48,10 @@ def normaliza_num(v) -> int | None:
 
 
 def periodos(p: str) -> Tuple[str, str, str, bool]:
-    """Retorna (atual, anterior, ante-anterior, is_trimestre)."""
+    """
+    Retorna (atual, anterior, ante-anterior, is_trimestre).
+    Aceita '2024' ou '1T25'.
+    """
     p = p.upper().strip()
     if re.fullmatch(r"\d{4}", p):
         a = int(p)
@@ -65,11 +65,13 @@ def periodos(p: str) -> Tuple[str, str, str, bool]:
 
 
 def col_txt_to_idx(txt: str) -> int:
-    """'A' -> 0 | 'AB' -> 27 | '0' -> 0 ..."""
-    txt = txt.strip().upper()
-    if txt.isdigit():
-        return int(txt)
-    return col2idx(txt) - 1
+    """
+    Converte letra de coluna Excel (ex.: 'A', 'BC') ou dígito '0' em índice 0-based.
+    """
+    t = txt.strip().upper()
+    if t.isdigit():
+        return int(t)
+    return col2idx(t) - 1
 
 
 def prepara_origem(
@@ -82,8 +84,8 @@ def prepara_origem(
     out_dir: Path | None,
 ) -> Path:
     """
-    Cria <arquivo>_tratado.xlsx (ou .xlsm) sem sobrescrever o
-    arquivo original e devolve o Path gerado.
+    Gera <stem>_tratado.xlsx/.xlsm sem jamais sobrescrever o original.
+    Renomeia abas e cabeçalhos por ano ou trimestre.
     """
     dst_dir = out_dir or path.parent
     dst_dir.mkdir(parents=True, exist_ok=True)
@@ -123,22 +125,22 @@ def prepara_origem(
         is_res = "resultado" in low
 
         def ren(c: str) -> str:
-            c_low = c.lower().strip()
+            cl = c.lower().strip()
             if is_trim and is_ap:
-                if c_low.startswith(H_TRI_AP[0]):
+                if cl.startswith(H_TRI_AP[0]):
                     return atual
-                if c_low.startswith(H_TRI_AP[1]):
+                if cl.startswith(H_TRI_AP[1]):
                     return ant
             elif is_trim and is_res:
-                if c_low.startswith(H_TRI_RES[0]):
+                if cl.startswith(H_TRI_RES[0]):
                     return atual
-                if c_low.startswith(H_TRI_RES[1]):
+                if cl.startswith(H_TRI_RES[1]):
                     return ant
-            if c_low.startswith(H_ANO[0]):
+            if cl.startswith(H_ANO[0]):
                 return atual
-            if c_low.startswith(H_ANO[1]):
+            if cl.startswith(H_ANO[1]):
                 return ant
-            if c_low.startswith(H_ANO[2]):
+            if cl.startswith(H_ANO[2]):
                 return ant2
             return c
 
@@ -146,7 +148,6 @@ def prepara_origem(
 
     engine = "openpyxl" if path.suffix.lower() in (".xlsx", ".xlsm") else None
     xls = pd.ExcelFile(path, engine=engine)
-
     with pd.ExcelWriter(dst_path, engine="openpyxl") as wr:
         for orig, novo in sheet_map.items():
             if orig not in xls.sheet_names:
@@ -155,6 +156,7 @@ def prepara_origem(
             df = df.rename(columns=ren_factory(orig))
             df.to_excel(wr, sheet_name=novo, index=False)
 
+    # garante que ao menos a primeira aba fique visível
     wb = load_workbook(dst_path)
     if wb.sheetnames:
         wb[wb.sheetnames[0]].sheet_state = "visible"
@@ -164,7 +166,7 @@ def prepara_origem(
 
 
 def shift_formula(f: str, delta: int) -> str:
-    """Desloca referências de colunas em uma fórmula por um delta."""
+    """Desloca referências de coluna em fórmulas complexas por um delta."""
     pat = re.compile(
         r"(?<![A-Za-z0-9_])(?:'[^']+'|[A-Za-z0-9_]+)?!"
         r"|(?<![A-Za-z0-9_])(\$?)([A-Za-z]{1,3})(?=\$?\d|:)",
@@ -185,9 +187,12 @@ def shift_formula(f: str, delta: int) -> str:
 
 
 def adjust_complex_formula(
-    formula: str, delta: int, map_number, used_vals: set[int] | None = None
+    formula: str,
+    delta: int,
+    map_number: Callable[[int], int | None],
+    used_vals: Set[int] | None = None,
 ) -> str:
-    """Ajusta uma fórmula complexa deslocando colunas e mapeando números."""
+    """Ajusta fórmula complexa deslocando colunas e mapeando literais."""
     num_pat = re.compile(r"(?<![A-Za-z])[-+]?\d[\d\.,]*")
     f2 = shift_formula(formula, delta)
 
@@ -206,7 +211,7 @@ def adjust_complex_formula(
 def valor_corresp(
     abas: Dict[str, pd.DataFrame], n: int, prev: str, curr: str
 ) -> int | None:
-    """Encontra o valor correspondente para um número nas planilhas de origem."""
+    """Retorna valor correspondente de n em abas, de prev→curr."""
     for df in abas.values():
         if prev not in df.columns or curr not in df.columns:
             continue
@@ -218,49 +223,61 @@ def valor_corresp(
 
 def atualizar_ws(
     ws,
-    get_val,
-    set_val,
+    get_val: Callable[[int, int], object],
+    set_val: Callable[[int, int, object], None],
     abas: Dict[str, pd.DataFrame],
     src_idx: int,
     dst_idx: int,
     atual: str,
     ant: str,
     start_row: int,
-) -> tuple[list[int], set[int], set[int]]:
-    """Copia/ajusta dados da coluna de origem para a de destino."""
+) -> tuple[List[int], Set[int], Set[int]]:
+    """
+    Copia e ajusta valores/fórmulas da coluna origem→destino.
+    Retorna (skipped_rows, skipped_vals, used_vals).
+    """
     c_src, c_dst = src_idx + 1, dst_idx + 1
     delta = c_dst - c_src
-    skipped_rows, skipped_vals, used_vals = [], set(), set()
-    empty_streak, r = 0, start_row
+    skipped_rows: List[int] = []
+    skipped_vals: Set[int] = set()
+    used_vals: Set[int] = set()
 
-    while empty_streak < 30 and r <= 1_048_576:
+    num_pat = re.compile(r"[-+]?\d[\d\.,]*")
+    empty_streak = 0
+    r = start_row
+
+    while empty_streak < 30 and r <= ws.max_row:  # tipo openpyxl
         v = get_val(r, c_src)
         if v in (None, ""):
             empty_streak += 1
             r += 1
             continue
         empty_streak = 0
-        wrote, destino = False, v
+
+        wrote = False
+        destino = v
 
         if isinstance(v, str) and v.startswith("="):
             if not re.search(r"[A-Za-z]", v[1:]):
-                def repl(m):
-                    n = valor_corresp(
-                        abas, normaliza_num(m.group(0).lstrip("+-")), ant, atual
-                    )
-                    if n is not None:
-                        sign = ""
-                        if m.group(0)[0] in "+-":
-                            sign = m.group(0)[0]
-                        return f"{sign}{abs(n)}"
-                    return m.group(0)
+                # soma/subtração de literais
+                def lit_repl(m: re.Match) -> str:
+                    tok = m.group(0)
+                    n0 = normaliza_num(tok.lstrip("+-"))
+                    n1 = valor_corresp(abas, n0, ant, atual)
+                    if n1 is not None:
+                        used_vals.add(n1)
+                        sign = tok[0] if tok[0] in "+-" else ""
+                        return f"{sign}{abs(n1)}"
+                    return tok
 
-                destino = "=" + re.sub(r"[-+]?\d[\d\.,]*", repl, v[1:])
+                destino = "=" + num_pat.sub(lit_repl, v[1:])
                 wrote = destino != v
             else:
+                # fórmula complexa
                 mp = lambda n: valor_corresp(abas, n, ant, atual)
                 destino = adjust_complex_formula(v, delta, mp, used_vals)
                 wrote = destino != v
+
         elif (n := normaliza_num(v)) is not None:
             novo = valor_corresp(abas, n, ant, atual)
             if novo is not None:
@@ -276,8 +293,10 @@ def atualizar_ws(
 
         if not wrote and normaliza_num(v) not in (None, 0):
             skipped_rows.append(r)
-            skipped_vals.add(normaliza_num(v))
+            skipped_vals.add(normaliza_num(v) or 0)
+
         r += 1
+
     return skipped_rows, skipped_vals, used_vals
 
 
@@ -302,21 +321,21 @@ def aplicar_dre_manual(
     dre_start: int,
     col_valor: str,
     is_xlwings: bool,
-):
-    """Copia valores específicos da DRE trimestral usando DRE_MAP."""
+) -> None:
+    """Insere manualmente linhas da DRE trimestral a partir de DRE_MAP."""
     for offset, desc in DRE_MAP.items():
         linha = dre_start + offset
         try:
-            raw_val = df_dre.loc[
+            raw = df_dre.loc[
                 df_dre["Descricao Conta"].str.strip() == desc, col_valor
             ].iloc[0]
-            valor = normaliza_num(raw_val) or raw_val
-            if is_xlwings:
-                sheet.cells(linha, col_dst_1based).value = valor
-            else:
-                sheet.cell(linha, col_dst_1based, value=valor)
-        except (IndexError, KeyError):
+        except Exception:
             continue
+        val = normaliza_num(raw) if normaliza_num(raw) is not None else raw
+        if is_xlwings:
+            sheet.cells(linha, col_dst_1based).value = val
+        else:
+            sheet.cell(linha, col_dst_1based, value=val)
 
 
 def inserir_depreciacao_dfc(
@@ -327,67 +346,97 @@ def inserir_depreciacao_dfc(
     col_valor: str,
     is_xlwings: bool,
 ) -> int | None:
-    """Lê Depreciação/Amortização da DFC e grava como valor negativo."""
+    """Lê Depreciação/Amortização da DFC e grava sempre como negativo."""
     if df_dfc is None or col_valor not in df_dfc.columns:
         return None
     desc = df_dfc["Descricao Conta"].astype(str)
     mask = desc.str.contains("deprecia|amortiza", case=False, na=False)
     try:
-        raw_val = df_dfc.loc[mask, col_valor].iloc[0]
-    except (IndexError, KeyError):
+        raw = df_dfc.loc[mask, col_valor].iloc[0]
+    except Exception:
         return None
-
-    num_val = normaliza_num(raw_val)
-    valor = -abs(num_val) if num_val is not None else f"-{str(raw_val).lstrip('+-')}"
-    num_val = normaliza_num(valor)
-
-    if is_xlwings:
-        sheet.cells(linha, col_dst_1based).value = valor
+    nv = normaliza_num(raw)
+    if nv is not None:
+        nv = -abs(nv)
+        val = nv
     else:
-        sheet.cell(linha, col_dst_1based, value=valor)
-    return num_val
+        s = str(raw).lstrip("+-")
+        val = f"-{s}"
+        nv = normaliza_num(val)
+    if is_xlwings:
+        sheet.cells(linha, col_dst_1based).value = val
+    else:
+        sheet.cell(linha, col_dst_1based, value=val)
+    return nv
 
 
 def destacar_inseridos(
-    orig_tratada: Path, used_vals: set[int], atual: str, prefer_xlwings: bool = True
-):
-    """Realça células na planilha de origem que foram usadas com sucesso."""
+    orig_tratada: Path, used_vals: Set[int], atual: str, prefer_xlwings: bool = True
+) -> None:
+    """
+    Destaca (verde+negrito) todas as células da coluna do período `atual`
+    cujo valor numérico esteja em `used_vals`.
+    """
     if not used_vals:
         return
 
+    # xlwings
     if prefer_xlwings and XLWINGS:
         try:
             wb = xw.Book(str(orig_tratada))
             for sht in wb.sheets:
-                headers = sht.range("A1").expand("right").value
-                if not headers:
-                    continue
-                headers = [headers] if not isinstance(headers, list) else headers
-                for i, val in enumerate(headers):
-                    if str(val).strip() == atual:
-                        last_row = sht.cells.last_cell.row
-                        rng = sht.range((2, i + 1), (last_row, i + 1)).value
-                        rng = [rng] if last_row == 1 else rng
-                        for r_idx, cell_val in enumerate(rng or [], start=2):
-                            if normaliza_num(cell_val) in used_vals:
-                                cell = sht.cells(r_idx, i + 1)
-                                cell.color = (204, 255, 204)
-                                cell.api.Font.Bold = True
+                hdrs = sht.range("A1").expand("right").value
+                hdrs = hdrs if isinstance(hdrs, list) else [hdrs]
+                cols = [i + 1 for i, h in enumerate(hdrs) if str(h).strip() == atual]
+                last = sht.cells.last_cell.row
+                for c in cols:
+                    vals = sht.range((2, c), (last, c)).value
+                    vals = vals if isinstance(vals, list) else [vals]
+                    for idx, v in enumerate(vals, start=2):
+                        if normaliza_num(v) in used_vals:
+                            cell = sht.cells(idx, c)
+                            cell.color = (204, 255, 204)
+                            cell.api.Font.Bold = True
             wb.save()
             return
         except Exception:
-            pass  # Fallback para openpyxl
+            pass
 
+    # openpyxl
     wb = load_workbook(orig_tratada, keep_vba=orig_tratada.suffix.lower() == ".xlsm")
     fill, bold = PatternFill("solid", fgColor="CCFFCC"), Font(bold=True)
     for ws in wb.worksheets:
-        atual_cols = [c.column for c in ws[1] if str(c.value).strip() == atual]
+        cols = [c.column for c in ws[1] if str(c.value).strip() == atual]
         for row in ws.iter_rows(min_row=2):
-            for c_idx in atual_cols:
-                cell = row[c_idx - 1]
+            for c in cols:
+                cell = row[c - 1]
                 if normaliza_num(cell.value) in used_vals:
                     cell.fill, cell.font = fill, bold
     wb.save(orig_tratada)
+
+
+def coletar_vals_do_spread(spread_path: Path, dst_idx: int, start_row: int) -> Set[int]:
+    """
+    Abre o Spread processado e coleta todos os ints da coluna-destino,
+    a partir de start_row, até 30 vazios seguidos.
+    """
+    wb = load_workbook(spread_path, data_only=True)
+    ws = wb.active
+    vals: Set[int] = set()
+    empty = 0
+    r = start_row
+    max_r = ws.max_row
+    while empty < 30 and r <= max_r:
+        raw = ws.cell(r, dst_idx + 1).value
+        if raw in (None, ""):
+            empty += 1
+        else:
+            empty = 0
+            n = normaliza_num(raw)
+            if n is not None:
+                vals.add(n)
+        r += 1
+    return vals
 
 
 def processar(
@@ -402,23 +451,25 @@ def processar(
     out_dir: Path | None = None,
     log: Callable[[str], None] = print,
 ) -> Path:
-    """Processa a planilha e realça valores usados na origem."""
-    src_idx, dst_idx = col_txt_to_idx(src_txt), col_txt_to_idx(dst_txt)
+    """Pipeline principal: gera Spread, origem tratada e destaques."""
+    src_idx = col_txt_to_idx(src_txt)
+    dst_idx = col_txt_to_idx(dst_txt)
     atual, ant, ant2, is_trim = periodos(periodo)
+
     orig_path = prepara_origem(ori, tipo, atual, ant, ant2, is_trim, out_dir)
     abas = pd.read_excel(orig_path, sheet_name=None, engine="openpyxl")
-    dre_sheet = f"{'cons' if tipo == 'consolidado' else 'ind'} DRE"
+    dre_sheet = f"{'cons' if tipo=='consolidado' else 'ind'} DRE"
     df_dre = abas.get(dre_sheet)
-    dfc_sheet = f"{'cons' if tipo == 'consolidado' else 'ind'} DFC"
-    df_dfc = abas.get(dfc_sheet)
-    used_vals = set()
+    df_dfc = abas.get(f"{'cons' if tipo=='consolidado' else 'ind'} DFC")
 
+    used_vals: Set[int] = set()
+
+    # tenta xlwings
     if XLWINGS and spr.suffix.lower() in {".xlsx", ".xlsm"}:
         try:
             wb = xw.Book(str(spr))
             sht = wb.sheets[0]
             get_val = lambda r, c: sht.cells(r, c).formula or sht.cells(r, c).value
-            
             def set_val(r, c, v):
                 prop = "formula" if isinstance(v, str) and v.startswith("=") else "value"
                 setattr(sht.cells(r, c), prop, v)
@@ -429,103 +480,104 @@ def processar(
             if is_trim and df_dre is not None:
                 aplicar_dre_manual(df_dre, sht, dst_idx + 1, dre_start, atual, True)
             if df_dfc is not None and (
-                v199 := inserir_depreciacao_dfc(
-                    df_dfc, sht, dst_idx + 1, 199, atual, True
-                )
+                v199 := inserir_depreciacao_dfc(df_dfc, sht, dst_idx + 1, 199, atual, True)
             ):
                 used_vals.add(v199)
             wb.app.calculate()
             wb.save()
         except Exception as exc:
             log(f"xlwings falhou, usando fallback: {exc}")
-    else:
-        is_xlsm = spr.suffix.lower() == ".xlsm"
-        wb = load_workbook(spr, keep_vba=is_xlsm)
-        ws = wb.active
-        _, _, used_vals = atualizar_ws(
-            ws,
-            lambda r, c: ws.cell(r, c).value,
-            lambda r, c, v: setattr(ws.cell(r, c), "value", v),
-            abas, src_idx, dst_idx, atual, ant, start_row,
-        )
-        if is_trim and df_dre is not None:
-            aplicar_dre_manual(df_dre, ws, dst_idx + 1, dre_start, atual, False)
-        if df_dfc is not None and (
-            v199 := inserir_depreciacao_dfc(
-                df_dfc, ws, dst_idx + 1, 199, atual, False
-            )
-        ):
-            used_vals.add(v199)
-        out_name = f"{spr.stem} {atual}{'.xlsm' if is_xlsm else '.xlsx'}"
-        spr = spr.with_name(out_name)
-        wb.save(spr)
 
-    destacar_inseridos(orig_path, used_vals, atual, prefer_xlwings=XLWINGS)
+    # fallback openpyxl
+    is_xlsm = spr.suffix.lower() == ".xlsm"
+    wb2 = load_workbook(spr, keep_vba=is_xlsm)
+    ws2 = wb2.active
+    _, _, used_vals = atualizar_ws(
+        ws2,
+        lambda r, c: ws2.cell(r, c).value,
+        lambda r, c, v: setattr(ws2.cell(r, c), "value", v),
+        abas, src_idx, dst_idx, atual, ant, start_row
+    )
+    if is_trim and df_dre is not None:
+        aplicar_dre_manual(df_dre, ws2, dst_idx + 1, dre_start, atual, False)
+    if df_dfc is not None and (
+        v199 := inserir_depreciacao_dfc(df_dfc, ws2, dst_idx + 1, 199, atual, False)
+    ):
+        used_vals.add(v199)
+    out_name = f"{spr.stem} {atual}{'.xlsm' if is_xlsm else '.xlsx'}"
+    spr = spr.with_name(out_name)
+    wb2.save(spr)
+
+    # destaca valores usados + todos que apareceram no Spread
+    spread_vals = coletar_vals_do_spread(spr, dst_idx, start_row)
+    highlight = used_vals.union(spread_vals)
+    destacar_inseridos(orig_path, highlight, atual, prefer_xlwings=XLWINGS)
+
     log(f"Origem tratada salva em: {orig_path}")
+    missing = spread_vals - used_vals
+    if missing:
+        log(f"⚠️  {len(missing)} valores entraram no Spread mas não estavam em used_vals:")
+        log(f"    {sorted(missing)}")
     return spr
 
 
 class App(ctk.CTk):
-    """Interface gráfica principal da aplicação."""
-
+    """Interface GUI em CustomTkinter para o atualizador de Spread."""
     def __init__(self):
         super().__init__()
         self.title("Atualizador de Spread")
         self.grid_columnconfigure((0, 1), weight=1)
-
+        # Arquivos
         self.var_ori = ctk.StringVar()
         self._campo_arquivo("Arquivo Origem", 0, self.var_ori)
         self.var_spr = ctk.StringVar()
         self._campo_arquivo("Arquivo Spread", 1, self.var_spr)
-
+        # Tipo
         self.var_tipo = ctk.StringVar(value="consolidado")
-        ctk.CTkLabel(self, text="Tipo").grid(row=2, column=0, sticky="w", padx=4, pady=(5,0))
-        ctk.CTkOptionMenu(
-            self, variable=self.var_tipo, values=["consolidado", "individual"]
-        ).grid(row=2, column=1, sticky="ew", padx=4, pady=(5,0))
-
+        ctk.CTkLabel(self, text="Tipo").grid(row=2, column=0, sticky="w", padx=4)
+        ctk.CTkOptionMenu(self, variable=self.var_tipo,
+                          values=["consolidado", "individual"]
+                          ).grid(row=2, column=1, sticky="ew", padx=4)
+        # Período e colunas
         self.var_per = ctk.StringVar()
         self._campo_txt("Período (Ex: 2024 ou 1T25)", 3, self.var_per)
         self.var_src = ctk.StringVar(value="A")
-        self._campo_txt("Coluna Origem (A ou 0…)", 4, self.var_src, width=80)
+        self._campo_txt("Coluna Origem", 4, self.var_src, width=80)
         self.var_dst = ctk.StringVar(value="B")
         self._campo_txt("Coluna Destino", 5, self.var_dst, width=80)
-
-        ctk.CTkButton(self, text="Processar", command=self._run).grid(
-            row=10, column=0, pady=10, padx=4, sticky="ew"
-        )
-        ctk.CTkButton(
-            self, text="Sair", fg_color="gray", command=self.destroy
-        ).grid(row=10, column=1, pady=10, padx=4, sticky="ew")
-
+        # Botões e log
+        ctk.CTkButton(self, text="Processar", command=self._run
+                      ).grid(row=10, column=0, pady=10, padx=4, sticky="ew")
+        ctk.CTkButton(self, text="Sair", fg_color="gray",
+                      command=self.destroy
+                      ).grid(row=10, column=1, pady=10, padx=4, sticky="ew")
         self.log = ctk.CTkTextbox(self, width=600, height=150, state="disabled")
-        self.log.grid(row=11, column=0, columnspan=2, pady=(5,10), padx=4, sticky="ew")
+        self.log.grid(row=11, column=0, columnspan=2, pady=(5,10), padx=4)
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
     def _campo_arquivo(self, rotulo: str, linha: int, var: ctk.StringVar):
-        ctk.CTkLabel(self, text=rotulo).grid(row=linha, column=0, sticky="w", padx=4, pady=(5,0))
-        ctk.CTkEntry(self, textvariable=var, width=420).grid(
-            row=linha, column=1, sticky="ew", padx=4, pady=(5,0)
-        )
-        
-        def escolher_arquivo():
+        ctk.CTkLabel(self, text=rotulo).grid(row=linha, column=0,
+                                            sticky="w", padx=4)
+        ctk.CTkEntry(self, textvariable=var, width=420
+                     ).grid(row=linha, column=1, sticky="ew", padx=4)
+        def escolhe():
             f = filedialog.askopenfilename(
-                filetypes=[("Excel", "*.xlsx *.xlsm *.xls")]
-            )
+                filetypes=[("Excel", "*.xlsx *.xlsm *.xls")])
             if f:
                 var.set(f)
+        ctk.CTkButton(self, text="…", width=30, command=escolhe
+                      ).grid(row=linha, column=2, padx=2)
 
-        button = ctk.CTkButton(self, text="…", width=30, command=escolher_arquivo)
-        button.grid(row=linha, column=2, padx=(2,4), pady=(5,0))
-
-    def _campo_txt(self, rotulo: str, linha: int, var: ctk.StringVar, width=420):
-        ctk.CTkLabel(self, text=rotulo).grid(row=linha, column=0, sticky="w", padx=4, pady=(5,0))
-        ctk.CTkEntry(self, textvariable=var, width=width).grid(
-            row=linha, column=1, sticky="w", padx=4, pady=(5,0)
-        )
+    def _campo_txt(self, rotulo: str, linha: int,
+                   var: ctk.StringVar, width: int = 420):
+        ctk.CTkLabel(self, text=rotulo).grid(row=linha, column=0,
+                                            sticky="w", padx=4)
+        ctk.CTkEntry(self, textvariable=var, width=width
+                     ).grid(row=linha, column=1, sticky="w", padx=4)
 
     def _log(self, msg: str):
         self.log.configure(state="normal")
-        self.log.insert("end", f"{msg}\n")
+        self.log.insert("end", msg + "\n")
         self.log.configure(state="disabled")
         self.log.see("end")
 
@@ -533,30 +585,21 @@ class App(ctk.CTk):
         try:
             ori = Path(self.var_ori.get())
             spr = Path(self.var_spr.get())
-
             if not (ori.exists() and spr.exists()):
-                self._log("Por favor, selecione arquivos válidos.")
+                self._log("Selecione arquivos válidos.")
                 return
-                
-            out_spread = processar(
-                ori=ori,
-                spr=spr,
-                tipo=self.var_tipo.get(),
+            out = processar(
+                ori=ori, spr=spr, tipo=self.var_tipo.get(),
                 periodo=self.var_per.get(),
-                src_txt=self.var_src.get(),
-                dst_txt=self.var_dst.get(),
-                start_row=27,
-                dre_start=150,
-                out_dir=None,  # Salva na mesma pasta do arquivo de origem
-                log=self._log,
+                src_txt=self.var_src.get(), dst_txt=self.var_dst.get(),
+                start_row=27, dre_start=150, out_dir=None,
+                log=self._log
             )
-            self._log(f"✔️ Processo finalizado: {out_spread}")
-        except Exception as exc:
-            logging.exception("Ocorreu um erro no processamento")
-            self._log(f"Erro: {exc}")
+            self._log(f"✔️  Finalizado: {out}")
+        except Exception as e:
+            logging.exception("Erro no processamento")
+            self._log(f"Erro: {e}")
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-    app = App()
-    app.mainloop()
+    App().mainloop()
