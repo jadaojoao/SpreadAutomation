@@ -375,7 +375,6 @@ def inserir_depreciacao_dfc(
         sheet.cell(linha, col_dst_1based, value=val)
     return nv
 
-
 def destacar_inseridos(
     orig_tratada: Path, used_vals: Set[int], atual: str, prefer_xlwings: bool = True
 ) -> None:
@@ -419,6 +418,97 @@ def destacar_inseridos(
                 if normaliza_num(cell.value) in used_vals:
                     cell.fill, cell.font = fill, bold
     wb.save(orig_tratada)
+
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill, Font
+
+def destacar_novos(orig_tratada: Path,
+                   prev: str,
+                   atual: str,
+                   prefer_xlwings: bool = True) -> None:
+    """
+    Destaca em azul-claro (+negrito) todas as células onde:
+      • em 'prev' o valor era 0
+      • em 'atual' o valor é != 0
+    Usa xlwings em bloco para ser rápido mesmo com o arquivo aberto.
+    """
+    from openpyxl import load_workbook
+    from openpyxl.styles import PatternFill, Font
+
+    # cores
+    rgb = (153, 204, 255)
+    fill_op = PatternFill("solid", fgColor="99CCFF")
+    bold_op = Font(bold=True)
+
+    if prefer_xlwings and XLWINGS:
+        try:
+            # 1) anexa ao workbook já aberto (ou abre se fechar)
+            for bk in xw.books:
+                if Path(bk.fullname).resolve() == orig_tratada.resolve():
+                    wb = bk
+                    break
+            else:
+                wb = xw.Book(str(orig_tratada))
+
+            for sht in wb.sheets:
+                # 2) cabeçalhos na linha 1
+                hdrs = sht.range("A1").expand("right").value
+                hdrs = hdrs if isinstance(hdrs, list) else [hdrs]
+
+                if prev not in hdrs or atual not in hdrs:
+                    continue
+                c_prev  = hdrs.index(prev)  + 1
+                c_atual = hdrs.index(atual) + 1
+
+                # 3) pega vetor de valores de prev e atual de uma vez
+                last = sht.cells.last_cell.row
+                vals_prev  = sht.range((2, c_prev),  (last, c_prev)).value
+                vals_atual = sht.range((2, c_atual), (last, c_atual)).value
+
+                # normaliza para lista
+                if not isinstance(vals_prev, list):  vals_prev  = [vals_prev]
+                if not isinstance(vals_atual, list): vals_atual = [vals_atual]
+
+                # 4) decide quais linhas destacar
+                to_highlight: List[int] = []
+                for i, (pv, av) in enumerate(zip(vals_prev, vals_atual), start=2):
+                    if normaliza_num(pv) == 0 and normaliza_num(av) not in (None, 0):
+                        to_highlight.append(i)
+
+                # 5) faz só as chamadas COM de pintura
+                for row in to_highlight:
+                    cell = sht.cells(row, c_atual)
+                    cell.color = rgb
+                    cell.api.Font.Bold = True
+
+            wb.save()
+            return
+        except Exception:
+            # cai no fallback se der qualquer erro
+            pass
+
+    # --- fallback openpyxl (arquivo fechado) ---
+    wb = load_workbook(orig_tratada,
+                       keep_vba=orig_tratada.suffix.lower() == ".xlsm")
+    fill = PatternFill("solid", fgColor="99CCFF")
+    bold = Font(bold=True)
+
+    for ws in wb.worksheets:
+        headers = {cell.value: cell.column for cell in ws[1]}
+        col_prev  = headers.get(prev)
+        col_atual = headers.get(atual)
+        if not col_prev or not col_atual:
+            continue
+
+        for row in ws.iter_rows(min_row=2):
+            vprev = row[col_prev - 1].value
+            vat   = row[col_atual - 1]
+            if normaliza_num(vprev) == 0 and normaliza_num(vat.value) not in (None, 0):
+                vat.fill = fill
+                vat.font = bold
+
+    wb.save(orig_tratada)
+
 
 
 def coletar_vals_do_spread(spread_path: Path, dst_idx: int, start_row: int) -> Set[int]:
@@ -518,6 +608,10 @@ def processar(
     spread_vals = coletar_vals_do_spread(spr, dst_idx, start_row)
     highlight = used_vals.union(spread_vals)
     destacar_inseridos(orig_path, highlight, atual, prefer_xlwings=XLWINGS)
+    # pinta de azul‐claro onde prev era 0 e atual ≠ 0
+    destacar_novos(orig_path, ant, atual, prefer_xlwings=XLWINGS)
+
+
 
     log(f"Origem tratada salva em: {orig_path}")
     missing = spread_vals - used_vals
