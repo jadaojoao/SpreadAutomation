@@ -1,13 +1,13 @@
-# app_spread.py · v4 (com mapa DMPL e destaque completo)
+# app_spread.py · v5 (corrigido Depreciação/Amortização em Trimestres)
 # --------------------------------------------------------------------
 # • Mapeamento correto das abas (DF Cons/Ind + DMPL)
-# • Cabeçalhos distintos para ano × trimestre
+# • Cabeçalhos distintos para ano × trimestre (inclui Fluxo de Caixa)
 # • DRE trimestral mapeado manualmente
-# • Depreciação/Amortização negativa na DFC
+# • Depreciação/Amortização negativa na DFC (agrega múltiplas linhas)
 # • Atualização ao vivo com xlwings; fallback openpyxl
 # • Destaque em verde dos valores usados (used_vals)
 # • Destaque em amarelo de todos os valores que apareceram no Spread
-# • Relatório de linhas pendentes na GUI
+# • Destaque em azul-claro de novidades 0→≠0 no período
 # --------------------------------------------------------------------
 from __future__ import annotations
 import logging
@@ -121,28 +121,26 @@ def prepara_origem(
 
     def ren_factory(sheet_orig: str) -> Callable[[str], str]:
         low = sheet_orig.lower()
-        is_ap = any(k in low for k in ("ativo", "passivo"))
-        is_res = "resultado" in low
+        # tratamos ativo/passivo como antes
+        is_ap  = any(k in low for k in ("ativo", "passivo"))
+        # e consideramos também "fluxo" *em trimestre* como parte do RES
+        is_res = "resultado" in low or (is_trim and "fluxo" in low)
 
-        def ren(c: str) -> str:
-            cl = c.lower().strip()
+        def ren(col: str) -> str:
+            c_low = col.lower().strip()
+            # trimestre em abas de ativo/passivo
             if is_trim and is_ap:
-                if cl.startswith(H_TRI_AP[0]):
-                    return atual
-                if cl.startswith(H_TRI_AP[1]):
-                    return ant
-            elif is_trim and is_res:
-                if cl.startswith(H_TRI_RES[0]):
-                    return atual
-                if cl.startswith(H_TRI_RES[1]):
-                    return ant
-            if cl.startswith(H_ANO[0]):
-                return atual
-            if cl.startswith(H_ANO[1]):
-                return ant
-            if cl.startswith(H_ANO[2]):
-                return ant2
-            return c
+                if c_low.startswith(H_TRI_AP[0]): return atual
+                if c_low.startswith(H_TRI_AP[1]): return ant
+            # trimestre em abas de resultado ou fluxo
+            if is_trim and is_res:
+                if c_low.startswith(H_TRI_RES[0]): return atual
+                if c_low.startswith(H_TRI_RES[1]): return ant
+            # caso geral (ano completo)
+            if c_low.startswith(H_ANO[0]): return atual
+            if c_low.startswith(H_ANO[1]): return ant
+            if c_low.startswith(H_ANO[2]): return ant2
+            return col
 
         return ren
 
@@ -156,13 +154,13 @@ def prepara_origem(
             df = df.rename(columns=ren_factory(orig))
             df.to_excel(wr, sheet_name=novo, index=False)
 
-    # garante que ao menos a primeira aba fique visível
+    # deixa a primeira aba visível
     wb = load_workbook(dst_path)
-    if wb.sheetnames:
-        wb[wb.sheetnames[0]].sheet_state = "visible"
+    wb[wb.sheetnames[0]].sheet_state = "visible"
     wb.save(dst_path)
 
     return dst_path
+
 
 
 def shift_formula(f: str, delta: int) -> str:
@@ -199,9 +197,8 @@ def adjust_complex_formula(
     def repl(m: re.Match) -> str:
         n = normaliza_num(m.group(0))
         novo = map_number(n)
-        if novo is not None:
-            if used_vals is not None:
-                used_vals.add(novo)
+        if novo is not None and used_vals is not None:
+            used_vals.add(novo)
             return str(novo)
         return m.group(0)
 
@@ -243,16 +240,14 @@ def atualizar_ws(
     used_vals: Set[int] = set()
 
     num_pat = re.compile(r"[-+]?\d[\d\.,]*")
-    # determina corretamente o número de linhas, seja openpyxl ou xlwings
     try:
         max_row = ws.max_row
     except AttributeError:
-        # xlwings Sheet não tem max_row
         max_row = ws.cells.last_cell.row
 
     empty_streak = 0
     r = start_row
-    while empty_streak < 30 and r <= max_row:  # tipo openpyxl
+    while empty_streak < 30 and r <= max_row:
         v = get_val(r, c_src)
         if v in (None, ""):
             empty_streak += 1
@@ -328,7 +323,7 @@ def aplicar_dre_manual(
     col_valor: str,
     is_xlwings: bool,
 ) -> None:
-    """Insere manualmente linhas da DRE trimestral a partir de DRE_MAP."""
+    """Insere linhas da DRE trimestral usando DRE_MAP."""
     for offset, desc in DRE_MAP.items():
         linha = dre_start + offset
         try:
@@ -352,28 +347,44 @@ def inserir_depreciacao_dfc(
     col_valor: str,
     is_xlwings: bool,
 ) -> int | None:
-    """Lê Depreciação/Amortização da DFC e grava sempre como negativo."""
+    """
+    Lê todas as linhas de Depreciação/Amortização na DFC, agrupa e grava:
+      • se 1 linha: grava valor negativo
+      • se >1: grava fórmula tipo '=-1000-2000-3000'
+    Retorna a soma (negativa) para inserir em `used_vals`.
+    """
     if df_dfc is None or col_valor not in df_dfc.columns:
         return None
+
+    # filtra todas as linhas que contenham 'deprecia' ou 'amortiza'
     desc = df_dfc["Descricao Conta"].astype(str)
     mask = desc.str.contains("deprecia|amortiza", case=False, na=False)
-    try:
-        raw = df_dfc.loc[mask, col_valor].iloc[0]
-    except Exception:
+    series = df_dfc.loc[mask, col_valor]
+
+    # normaliza e filtra nulos
+    nums = [normaliza_num(v) for v in series]
+    nums = [n for n in nums if n is not None]
+    if not nums:
         return None
-    nv = normaliza_num(raw)
-    if nv is not None:
-        nv = -abs(nv)
-        val = nv
+
+    # monta saída
+    if len(nums) == 1:
+        total = -abs(nums[0])
+        val = total
     else:
-        s = str(raw).lstrip("+-")
-        val = f"-{s}"
-        nv = normaliza_num(val)
+        # soma literais em fórmula
+        terms = "".join(f"-{abs(n)}" for n in nums)
+        total = -sum(abs(n) for n in nums)
+        val = f"={terms.lstrip('+')}"
+
+    # grava
     if is_xlwings:
         sheet.cells(linha, col_dst_1based).value = val
     else:
         sheet.cell(linha, col_dst_1based, value=val)
-    return nv
+
+    return total
+
 
 def destacar_inseridos(
     orig_tratada: Path, used_vals: Set[int], atual: str, prefer_xlwings: bool = True
