@@ -1,4 +1,4 @@
-# app_spread.py · v5 (corrigido Depreciação/Amortização em Trimestres)
+# app_spread.py · v5 (corrigido DMPL em Trimestres)
 # --------------------------------------------------------------------
 # • Mapeamento correto das abas (DF Cons/Ind + DMPL)
 # • Cabeçalhos distintos para ano × trimestre (inclui Fluxo de Caixa)
@@ -85,11 +85,15 @@ def prepara_origem(
 ) -> Path:
     """
     Gera <stem>_tratado.xlsx/.xlsm sem jamais sobrescrever o original.
-    Renomeia abas e cabeçalhos por ano ou trimestre.
+    Renomeia abas e cabeçalhos por ano ou trimestre, incluindo o DMPL correto.
     """
     dst_dir = out_dir or path.parent
     dst_dir.mkdir(parents=True, exist_ok=True)
     dst_path = dst_dir / f"{path.stem}_tratado{path.suffix}"
+
+    # monta o nome da aba DMPL conforme ano x trimestre
+    chapa = "Cons" if tipo == "consolidado" else "Ind"
+    aba_dm = f"DF {chapa} DMPL {'Atual' if is_trim else 'Ultimo'}"
 
     sheet_map = {
         "consolidado": {
@@ -97,49 +101,43 @@ def prepara_origem(
             "DF Cons Passivo": "cons passivos",
             "DF Cons Resultado Periodo": "cons DRE",
             "DF Cons Fluxo de Caixa": "cons DFC",
-            "DF Cons DMPL Ultimo": "cons DMPL",
+            aba_dm: "cons DMPL",
         },
         "individual": {
             "DF Ind Ativo": "ind ativos",
             "DF Ind Passivo": "ind passivos",
             "DF Ind Resultado Periodo": "ind DRE",
             "DF Ind Fluxo de Caixa": "ind DFC",
-            "DF Ind DMPL Ultimo": "ind DMPL",
+            aba_dm: "ind DMPL",
         },
     }[tipo]
 
-    H_ANO = (
-        "valor ultimo exercicio",
-        "valor penultimo exercicio",
-        "valor antepenultimo exercicio",
-    )
+    H_ANO    = ("valor ultimo exercicio",
+                "valor penultimo exercicio",
+                "valor antepenultimo exercicio")
     H_TRI_AP = ("valor trimestre atual", "valor exercicio anterior")
-    H_TRI_RES = (
-        "valor acumulado atual exercicio",
-        "valor acumulado exercicio anterior",
-    )
+    H_TRI_RES= ("valor acumulado atual exercicio",
+                "valor acumulado exercicio anterior")
 
     def ren_factory(sheet_orig: str) -> Callable[[str], str]:
         low = sheet_orig.lower()
-        # tratamos ativo/passivo como antes
         is_ap  = any(k in low for k in ("ativo", "passivo"))
-        # e consideramos também "fluxo" *em trimestre* como parte do RES
         is_res = "resultado" in low or (is_trim and "fluxo" in low)
 
         def ren(col: str) -> str:
-            c_low = col.lower().strip()
+            c = col.lower().strip()
             # trimestre em abas de ativo/passivo
             if is_trim and is_ap:
-                if c_low.startswith(H_TRI_AP[0]): return atual
-                if c_low.startswith(H_TRI_AP[1]): return ant
+                if c.startswith(H_TRI_AP[0]): return atual
+                if c.startswith(H_TRI_AP[1]): return ant
             # trimestre em abas de resultado ou fluxo
             if is_trim and is_res:
-                if c_low.startswith(H_TRI_RES[0]): return atual
-                if c_low.startswith(H_TRI_RES[1]): return ant
-            # caso geral (ano completo)
-            if c_low.startswith(H_ANO[0]): return atual
-            if c_low.startswith(H_ANO[1]): return ant
-            if c_low.startswith(H_ANO[2]): return ant2
+                if c.startswith(H_TRI_RES[0]): return atual
+                if c.startswith(H_TRI_RES[1]): return ant
+            # caso ano completo
+            if c.startswith(H_ANO[0]): return atual
+            if c.startswith(H_ANO[1]): return ant
+            if c.startswith(H_ANO[2]): return ant2
             return col
 
         return ren
@@ -154,7 +152,7 @@ def prepara_origem(
             df = df.rename(columns=ren_factory(orig))
             df.to_excel(wr, sheet_name=novo, index=False)
 
-    # deixa a primeira aba visível
+    # garante que a primeira aba fique visível
     wb = load_workbook(dst_path)
     wb[wb.sheetnames[0]].sheet_state = "visible"
     wb.save(dst_path)
@@ -574,13 +572,28 @@ def processar(
     # tenta xlwings
     if XLWINGS and spr.suffix.lower() in {".xlsx", ".xlsm"}:
         try:
-            wb = xw.Book(str(spr))
-            sht = wb.sheets[0]
+            # 1) Anexa ao workbook já aberto ou abre novo
+            for bk in xw.books:
+                if Path(bk.fullname).resolve() == spr.resolve():
+                    wb = bk
+                    break
+            else:
+                wb = xw.Book(str(spr))
+
+            # 2) Escolhe a aba "Entrada de Dado" se existir, senão a ativa
+            nomes = [s.name for s in wb.sheets]
+            if "Entrada de Dado" in nomes:
+                sht = wb.sheets["Entrada de Dado"]
+            else:
+                sht = wb.sheets.active
+
+            # 3) Define getters/setters robustos
             get_val = lambda r, c: sht.cells(r, c).formula or sht.cells(r, c).value
             def set_val(r, c, v):
                 prop = "formula" if isinstance(v, str) and v.startswith("=") else "value"
                 setattr(sht.cells(r, c), prop, v)
 
+            # 4) Atualiza o Spread
             _, _, used_vals = atualizar_ws(
                 sht, get_val, set_val, abas, src_idx, dst_idx, atual, ant, start_row
             )
@@ -590,10 +603,14 @@ def processar(
                 v199 := inserir_depreciacao_dfc(df_dfc, sht, dst_idx + 1, 199, atual, True)
             ):
                 used_vals.add(v199)
+
+            # 5) Recalcula e salva
             wb.app.calculate()
             wb.save()
+
         except Exception as exc:
             log(f"xlwings falhou, usando fallback: {exc}")
+
 
     # fallback openpyxl
     is_xlsm = spr.suffix.lower() == ".xlsm"
