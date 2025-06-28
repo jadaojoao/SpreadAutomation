@@ -383,6 +383,66 @@ def inserir_depreciacao_dfc(
 
     return total
 
+def inserir_dividendos_dm(
+    df_dm: pd.DataFrame,
+    sheet,
+    col_dst_1based: int,
+    linha: int,
+    is_xlwings: bool,
+) -> int | None:
+    """
+    Filtra na aba DMPL todas as linhas cujo texto contenha 'dividendos',
+    coleta os valores das colunas de patrimônio (Consolidado → Líquido),
+    normaliza para int e gera:
+      - se 1 valor: insere esse valor negativo
+      - se >1 valores: insere fórmula tipo '=-x-y-z...'
+    Retorna o total negativo (int) para adicionar a used_vals.
+    """
+    if df_dm is None:
+        return None
+
+    # 1) escolhe coluna de valor
+    cols = list(df_dm.columns)
+    # tenta primeiro Patrimônio líquido Consolidado
+    val_cols = [c for c in cols if re.search(r'patrim[oô]nio.*consolidado', c, flags=re.I)]
+    # se não achar, busca por Patrimônio Líquido
+    if not val_cols:
+        val_cols = [c for c in cols if re.search(r'patrim[oô]nio.*liquido', c, flags=re.I)]
+    if not val_cols:
+        return None
+    col_valor = val_cols[0]
+
+    # 2) filtra 'dividendos'
+    mask = df_dm["DescricaoConta"].astype(str)\
+               .str.contains("dividendos", case=False, na=False)
+    series = df_dm.loc[mask, col_valor]
+
+    # 3) normaliza e filtra nulos
+    nums = [normaliza_num(v) for v in series]
+    nums = [n for n in nums if n is not None]
+    if not nums:
+        return None
+
+    # 4) monta valor/fórmula
+    if len(nums) == 1:
+        total = -abs(nums[0])
+        val = total
+    else:
+        terms = "".join(f"-{abs(n)}" for n in nums)
+        total = -sum(abs(n) for n in nums)
+        val = f"={terms.lstrip('+')}"
+
+    # 5) grava no Spread
+    if is_xlwings:
+        sheet.cells(linha, col_dst_1based).value = val
+    else:
+        sheet.cell(linha, col_dst_1based, value=val)
+
+    return total
+
+
+
+
 
 def destacar_inseridos(
     orig_tratada: Path, used_vals: Set[int], atual: str, prefer_xlwings: bool = True
@@ -566,56 +626,63 @@ def processar(
     dre_sheet = f"{'cons' if tipo=='consolidado' else 'ind'} DRE"
     df_dre = abas.get(dre_sheet)
     df_dfc = abas.get(f"{'cons' if tipo=='consolidado' else 'ind'} DFC")
+    df_dm  = abas.get(f"{'cons' if tipo=='consolidado' else 'ind'} DMPL")
 
     used_vals: Set[int] = set()
 
     # tenta xlwings
     if XLWINGS and spr.suffix.lower() in {".xlsx", ".xlsm"}:
         try:
-            # 1) Anexa ao workbook já aberto ou abre novo
+            # abre ou conecta ao livro
             for bk in xw.books:
                 if Path(bk.fullname).resolve() == spr.resolve():
-                    wb = bk
-                    break
+                    wb = bk; break
             else:
                 wb = xw.Book(str(spr))
 
-            # 2) Escolhe a aba "Entrada de Dado" se existir, senão a ativa
+            # escolhe aba
             nomes = [s.name for s in wb.sheets]
-            if "Entrada de Dado" in nomes:
-                sht = wb.sheets["Entrada de Dado"]
-            else:
-                sht = wb.sheets.active
+            sht = wb.sheets["Entrada de Dado"] if "Entrada de Dado" in nomes else wb.sheets.active
 
-            # 3) Define getters/setters robustos
+            # getters/setters
             get_val = lambda r, c: sht.cells(r, c).formula or sht.cells(r, c).value
             def set_val(r, c, v):
-                prop = "formula" if isinstance(v, str) and v.startswith("=") else "value"
-                setattr(sht.cells(r, c), prop, v)
+                attr = "formula" if isinstance(v, str) and v.startswith("=") else "value"
+                setattr(sht.cells(r, c), attr, v)
 
-            # 4) Atualiza o Spread
+            # atualiza dados principais
             _, _, used_vals = atualizar_ws(
-                sht, get_val, set_val, abas, src_idx, dst_idx, atual, ant, start_row
+                sht, get_val, set_val, abas,
+                src_idx, dst_idx, atual, ant, start_row
             )
             if is_trim and df_dre is not None:
-                aplicar_dre_manual(df_dre, sht, dst_idx + 1, dre_start, atual, True)
-            if df_dfc is not None and (
-                v199 := inserir_depreciacao_dfc(df_dfc, sht, dst_idx + 1, 199, atual, True)
-            ):
-                used_vals.add(v199)
+                aplicar_dre_manual(df_dre, sht, dst_idx+1, dre_start, atual, True)
+            if df_dfc is not None:
+                if v199 := inserir_depreciacao_dfc(df_dfc, sht, dst_idx+1, 199, atual, True):
+                    used_vals.add(v199)
 
-            # 5) Recalcula e salva
+            # --- insere dividendos DMPL na linha 210 ---
+            if df_dm is not None:
+                # detecta a coluna de patrimônio
+                header = "Patrimônio líquido Consolidado" if tipo=="consolidado" else "Patrimônio Líquido"
+                hdrs = sht.range("A1").expand("right").value
+                hdrs = hdrs if isinstance(hdrs, list) else [hdrs]
+                if header in hdrs:
+                    col_dm = hdrs.index(header) + 1
+                    if v210 := inserir_dividendos_dm(df_dm, sht, col_dm, 210, True):
+                        used_vals.add(v210)
+
             wb.app.calculate()
             wb.save()
 
         except Exception as exc:
             log(f"xlwings falhou, usando fallback: {exc}")
 
-
     # fallback openpyxl
     is_xlsm = spr.suffix.lower() == ".xlsm"
     wb2 = load_workbook(spr, keep_vba=is_xlsm)
     ws2 = wb2.active
+
     _, _, used_vals = atualizar_ws(
         ws2,
         lambda r, c: ws2.cell(r, c).value,
@@ -623,23 +690,28 @@ def processar(
         abas, src_idx, dst_idx, atual, ant, start_row
     )
     if is_trim and df_dre is not None:
-        aplicar_dre_manual(df_dre, ws2, dst_idx + 1, dre_start, atual, False)
-    if df_dfc is not None and (
-        v199 := inserir_depreciacao_dfc(df_dfc, ws2, dst_idx + 1, 199, atual, False)
-    ):
-        used_vals.add(v199)
+        aplicar_dre_manual(df_dre, ws2, dst_idx+1, dre_start, atual, False)
+    if df_dfc is not None:
+        if v199 := inserir_depreciacao_dfc(df_dfc, ws2, dst_idx+1, 199, atual, False):
+            used_vals.add(v199)
+
+    # --- insere dividendos DMPL na linha 210 (openpyxl) ---
+    if df_dm is not None:
+        cols = {cell.value: cell.column for cell in ws2[1]}
+        header = "Patrimônio líquido Consolidado" if tipo=="consolidado" else "Patrimônio Líquido"
+        col_dm = cols.get(header)
+        if col_dm and (v210 := inserir_dividendos_dm(df_dm, ws2, col_dm, 210, False)):
+            used_vals.add(v210)
+
     out_name = f"{spr.stem} {atual}{'.xlsm' if is_xlsm else '.xlsx'}"
     spr = spr.with_name(out_name)
     wb2.save(spr)
 
-    # destaca valores usados + todos que apareceram no Spread
+    # destaques finais
     spread_vals = coletar_vals_do_spread(spr, dst_idx, start_row)
     highlight = used_vals.union(spread_vals)
     destacar_inseridos(orig_path, highlight, atual, prefer_xlwings=XLWINGS)
-    # pinta de azul‐claro onde prev era 0 e atual ≠ 0
     destacar_novos(orig_path, ant, atual, prefer_xlwings=XLWINGS)
-
-
 
     log(f"Origem tratada salva em: {orig_path}")
     missing = spread_vals - used_vals
@@ -647,6 +719,8 @@ def processar(
         log(f"⚠️  {len(missing)} valores entraram no Spread mas não estavam em used_vals:")
         log(f"    {sorted(missing)}")
     return spr
+
+
 
 
 class App(ctk.CTk):
