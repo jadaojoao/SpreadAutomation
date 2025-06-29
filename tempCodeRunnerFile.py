@@ -1,4 +1,4 @@
-# app_spread.py · v6 (com captura de Dividendos na DMPL)
+# app_spread.py · v7 (com captura de Aumento de Capital na DMPL)
 # --------------------------------------------------------------------
 # • Mapeamento correto das abas (DF Cons/Ind + DMPL)
 # • Cabeçalhos distintos para ano × trimestre (inclui Fluxo de Caixa)
@@ -189,65 +189,97 @@ def valor_corresp(
 
 
 def atualizar_ws(
-    ws, get_val, set_val,
-    abas: Dict[str,pd.DataFrame],
-    src_idx: int, dst_idx: int,
-    atual: str, ant: str, start_row: int
-) -> tuple[List[int],Set[int],Set[int]]:
-    c_src, c_dst = src_idx+1, dst_idx+1
+    ws,
+    get_val: Callable[[int, int], object],
+    set_val: Callable[[int, int, object], None],
+    abas: Dict[str, pd.DataFrame],
+    src_idx: int,
+    dst_idx: int,
+    atual: str,
+    ant: str,
+    start_row: int,
+) -> tuple[List[int], Set[int], Set[int]]:
+    """
+    Copia e ajusta valores/fórmulas da coluna origem→destino EXCETO
+    nas linhas 199, 209, 210 e 214 (que serão povoadas pelas funções
+    específicas de DFC / DMPL).
+    Retorna (skipped_rows, skipped_vals, used_vals).
+    """
+    c_src, c_dst = src_idx + 1, dst_idx + 1
     delta = c_dst - c_src
-    skipped_rows, skipped_vals, used_vals = [], set(), set()
+    skipped_rows: List[int] = []
+    skipped_vals: Set[int] = set()
+    used_vals: Set[int] = set()
+
+    # linhas que não devem entrar na varredura padrão
+    SKIP = {199, 209, 210, 214}
+
     num_pat = re.compile(r"[-+]?\d[\d\.,]*")
     try:
         max_row = ws.max_row
     except AttributeError:
         max_row = ws.cells.last_cell.row
 
-    empty_streak, r = 0, start_row
-    while empty_streak<30 and r<=max_row:
-        v = get_val(r, c_src)
-        if v in (None,""):
-            empty_streak+=1; r+=1; continue
-        empty_streak=0
-        wrote=False; destino=v
+    empty_streak = 0
+    r = start_row
+    while empty_streak < 30 and r <= max_row:
+        # pula as linhas de DFC/DMPL
+        if r in SKIP:
+            r += 1
+            continue
 
-        if isinstance(v,str) and v.startswith("="):
+        v = get_val(r, c_src)
+        if v in (None, ""):
+            empty_streak += 1
+            r += 1
+            continue
+        empty_streak = 0
+
+        wrote = False
+        destino = v
+
+        if isinstance(v, str) and v.startswith("="):
             if not re.search(r"[A-Za-z]", v[1:]):
-                def lit_repl(m):
+                # soma/subtração de literais
+                def lit_repl(m: re.Match) -> str:
                     tok = m.group(0)
                     n0 = normaliza_num(tok.lstrip("+-"))
-                    n1 = valor_corresp(abas,n0,ant,atual)
+                    n1 = valor_corresp(abas, n0, ant, atual)
                     if n1 is not None:
                         used_vals.add(n1)
                         sign = tok[0] if tok[0] in "+-" else ""
                         return f"{sign}{abs(n1)}"
                     return tok
-                destino = "=" + num_pat.sub(lit_repl, v[1:])
-                wrote = destino!=v
-            else:
-                mp = lambda n: valor_corresp(abas,n,ant,atual)
-                destino = adjust_complex_formula(v,delta,mp,used_vals)
-                wrote = destino!=v
 
-        elif (n:=normaliza_num(v)) is not None:
-            novo = valor_corresp(abas,n,ant,atual)
+                destino = "=" + num_pat.sub(lit_repl, v[1:])
+                wrote = destino != v
+            else:
+                # fórmula complexa
+                mp = lambda n: valor_corresp(abas, n, ant, atual)
+                destino = adjust_complex_formula(v, delta, mp, used_vals)
+                wrote = destino != v
+
+        elif (n := normaliza_num(v)) is not None:
+            novo = valor_corresp(abas, n, ant, atual)
             if novo is not None:
                 destino, wrote = novo, True
                 used_vals.add(novo)
         else:
-            wrote=True
+            wrote = True
 
         try:
-            set_val(r,c_dst,destino)
-        except:
-            wrote=False
+            set_val(r, c_dst, destino)
+        except Exception:
+            wrote = False
 
-        if not wrote and normaliza_num(v) not in (None,0):
+        if not wrote and normaliza_num(v) not in (None, 0):
             skipped_rows.append(r)
             skipped_vals.add(normaliza_num(v) or 0)
-        r+=1
+
+        r += 1
 
     return skipped_rows, skipped_vals, used_vals
+
 
 
 DRE_MAP = {
@@ -577,6 +609,15 @@ def processar(
     # prepara e lê as abas tratadas
     orig_path = prepara_origem(ori, tipo, atual, ant, ant2, is_trim, out_dir)
     abas = pd.read_excel(orig_path, sheet_name=None, engine="openpyxl")
+
+    # extraia só as abas de BP e DRE (usando os nomes que você já mapeou no prepara_origem)
+    prefix = 'cons' if tipo=='consolidado' else 'ind'
+    orig_abas = {
+        f"{prefix} ativos": abas[f"{prefix} ativos"],
+        f"{prefix} passivos": abas[f"{prefix} passivos"],
+        f"{prefix} DRE":     abas[f"{prefix} DRE"],
+    }
+
     df_dre = abas.get(f"{'cons' if tipo=='consolidado' else 'ind'} DRE")
     df_dfc = abas.get(f"{'cons' if tipo=='consolidado' else 'ind'} DFC")
     df_dm  = abas.get(f"{'cons' if tipo=='consolidado' else 'ind'} DMPL")
@@ -605,7 +646,7 @@ def processar(
 
             # 1) DADOS PRINCIPAIS
             _, _, used = atualizar_ws(
-                sht, get_val, set_val, abas,
+                sht, get_val, set_val, orig_abas,
                 src_idx, dst_idx, atual, ant, start_row
             )
             used_vals |= used
@@ -651,7 +692,7 @@ def processar(
         ws2,
         lambda r, c: ws2.cell(r, c).value,
         lambda r, c, v: setattr(ws2.cell(r, c), "value", v),
-        abas, src_idx, dst_idx, atual, ant, start_row
+        orig_abas, src_idx, dst_idx, atual, ant, start_row
     )
     used_vals |= used
 
