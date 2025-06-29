@@ -1,14 +1,23 @@
-# app_spread.py · v7 (com captura de Aumento de Capital na DMPL)
+# app_spread.py · v9 (auto-ajuste de colunas Origem/Destino via Período)
 # --------------------------------------------------------------------
-# • Mapeamento correto das abas (DF Cons/Ind + DMPL)
-# • Cabeçalhos distintos para ano × trimestre (inclui Fluxo de Caixa)
-# • DRE trimestral mapeado manualmente
+# • Mapeamento correto das abas (DF Cons/Ind + DMPL, Atual/Último conforme trimestre/ano)
+# • Normalização de cabeçalhos distintos para ano × trimestre (Ativo/Passivo, DRE, DFC, DMPL)
+# • Varredura do Spread limitada apenas a BP e DRE; DFC e DMPL são tratados em funções específicas
+# • Pulagem automática das linhas 199, 209, 210 e 214 na varredura padrão
+# • DRE trimestral mapeado manualmente via DRE_MAP
 # • Depreciação/Amortização negativa na DFC (agrega múltiplas linhas)
-# • Captura de Dividendos na DMPL e inserção na linha 210
-# • Atualização ao vivo com xlwings; fallback openpyxl
-# • Destaque em verde dos valores usados (used_vals)
-# • Destaque em amarelo de todos os valores que apareceram no Spread
-# • Destaque em azul-claro de novidades 0→≠0 no período
+# • Captura de Dividendos e JCP na DMPL:
+#     – soma NEGATIVA em linha 210
+#     – soma POSITIVA em linha 209
+# • Captura de Aumentos de Capital na DMPL:
+#     – soma (positiva) em linha 214
+# • Ajuste automático de colunas Origem e Destino pelo período:
+#     – Ano completo: Origem = H, Destino = J
+#     – Trimestre:    Origem = J, Destino = L
+# • Atualização ao vivo com xlwings; fallback em openpyxl
+# • Destaque em verde (used_vals) para células usadas na atualização
+# • Destaque em amarelo para todos os valores que apareceram no Spread
+# • Destaque em azul-claro para novidades (prev=0 → atual≠0)
 # --------------------------------------------------------------------
 from __future__ import annotations
 import logging
@@ -132,9 +141,24 @@ def prepara_origem(
             if orig not in xls.sheet_names:
                 continue
             df = pd.read_excel(xls, sheet_name=orig, engine=engine)
+            # renomeia colunas
             df = df.rename(columns=ren_factory(orig))
+
+            # remove linhas onde todos os períodos são zero
+            # coluna de períodos: [atual, ant] em trimestre, ou [atual, ant, ant2] em ano
+            period_cols = [atual, ant] if is_trim else [atual, ant, ant2]
+            # filtra apenas colunas existentes
+            period_cols = [c for c in period_cols if c in df.columns]
+            if period_cols:
+                # marca linhas onde todos os valores normalizados == 0
+                mask_all_zero = df[period_cols] \
+                    .applymap(lambda v: normaliza_num(v) == 0) \
+                    .all(axis=1)
+                df = df.loc[~mask_all_zero]
+
             df.to_excel(wr, sheet_name=novo, index=False)
 
+    # garante que a primeira aba fique visível
     wb = load_workbook(dst_path)
     wb[wb.sheetnames[0]].sheet_state = "visible"
     wb.save(dst_path)
@@ -163,9 +187,10 @@ def adjust_complex_formula(
     map_number: Callable[[int], int|None],
     used_vals: Set[int]|None=None
 ) -> str:
-    num_pat = re.compile(r"(?<![A-Za-z])[-+]?\d[\d\.,]*")
+    num_pat = re.compile(r"(?<![A-Za-z0-9_])[-+]?\d[\d\.,]*(?![A-Za-z0-9_])")
     f2 = shift_formula(formula, delta)
-    def repl(m):
+
+    def repl(m: re.Match) -> str:
         n = normaliza_num(m.group(0))
         novo = map_number(n)
         if novo is not None and used_vals is not None:
@@ -744,24 +769,61 @@ class App(ctk.CTk):
         super().__init__()
         self.title("Atualizador de Spread")
         self.grid_columnconfigure((0,1), weight=1)
+
+        # variáveis
         self.var_ori = ctk.StringVar()
-        self._campo_arquivo("Arquivo Origem", 0, self.var_ori)
         self.var_spr = ctk.StringVar()
-        self._campo_arquivo("Arquivo Spread", 1, self.var_spr)
         self.var_tipo = ctk.StringVar(value="consolidado")
-        ctk.CTkLabel(self, text="Tipo").grid(row=2,column=0,sticky="w",padx=4)
-        ctk.CTkOptionMenu(self, variable=self.var_tipo, values=["consolidado","individual"]).grid(row=2,column=1,sticky="ew",padx=4)
         self.var_per = ctk.StringVar()
-        self._campo_txt("Período (Ex: 2024 ou 1T25)",3,self.var_per)
-        self.var_src = ctk.StringVar(value="A")
-        self._campo_txt("Coluna Origem",4,self.var_src,width=80)
-        self.var_dst = ctk.StringVar(value="B")
-        self._campo_txt("Coluna Destino",5,self.var_dst,width=80)
-        ctk.CTkButton(self,text="Processar",command=self._run).grid(row=10,column=0,pady=10,padx=4,sticky="ew")
-        ctk.CTkButton(self,text="Sair",fg_color="gray",command=self.destroy).grid(row=10,column=1,pady=10,padx=4,sticky="ew")
-        self.log = ctk.CTkTextbox(self,width=600,height=150,state="disabled")
-        self.log.grid(row=11,column=0,columnspan=2,pady=(5,10),padx=4)
+        self.var_src = ctk.StringVar()
+        self.var_dst = ctk.StringVar()
+
+        # campos de arquivo
+        self._campo_arquivo("Arquivo Origem", 0, self.var_ori)
+        self._campo_arquivo("Arquivo Spread", 1, self.var_spr)
+
+        # tipo consol/indiv
+        ctk.CTkLabel(self, text="Tipo").grid(row=2, column=0, sticky="w", padx=4)
+        ctk.CTkOptionMenu(self, variable=self.var_tipo,
+                          values=["consolidado", "individual"]
+                          ).grid(row=2, column=1, sticky="ew", padx=4)
+
+        # período e colunas
+        self._campo_txt("Período (Ex: 2024 ou 1T25)", 3, self.var_per)
+        self._campo_txt("Coluna Origem",        4, self.var_src, width=80)
+        self._campo_txt("Coluna Destino",       5, self.var_dst, width=80)
+
+        # trace para ajustar colunas automaticamente
+        self.var_per.trace_add("write", self._on_period_change)
+
+        # botões e log
+        ctk.CTkButton(self, text="Processar", command=self._run).grid(row=10, column=0, pady=10, padx=4, sticky="ew")
+        ctk.CTkButton(self, text="Sair", fg_color="gray",
+                      command=self.destroy
+                      ).grid(row=10, column=1, pady=10, padx=4, sticky="ew")
+        self.log = ctk.CTkTextbox(self, width=600, height=150, state="disabled")
+        self.log.grid(row=11, column=0, columnspan=2, pady=(5,10), padx=4)
+
         logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+        # inicializa colunas padrão
+        self._on_period_change()
+
+    def _on_period_change(self, *args):
+        # define origem/destino conforme tipo de período
+        p = self.var_per.get().strip()
+        try:
+            _, _, _, is_trim = periodos(p)
+        except Exception:
+            return
+        if is_trim:
+            # trimestre: Origem J, Destino L
+            self.var_src.set("J")
+            self.var_dst.set("L")
+        else:
+            # ano completo: Origem H, Destino J
+            self.var_src.set("H")
+            self.var_dst.set("J")
 
     def _campo_arquivo(self, rotulo, linha, var):
         ctk.CTkLabel(self,text=rotulo).grid(row=linha,column=0,sticky="w",padx=4)
