@@ -1,4 +1,4 @@
-# app_spread.py · v6 (com captura de Dividendos na DMPL)
+# app_spread.py · v7 (com captura de Aumento de Capital na DMPL)
 # --------------------------------------------------------------------
 # • Mapeamento correto das abas (DF Cons/Ind + DMPL)
 # • Cabeçalhos distintos para ano × trimestre (inclui Fluxo de Caixa)
@@ -394,8 +394,58 @@ def inserir_dividendos_dm(
     return total_neg, total_pos
 
 
+def inserir_aumentos_capital_dm(
+    df_dm: pd.DataFrame,
+    sheet,
+    col_dst_1based: int,
+    linha: int,
+    is_xlwings: bool
+) -> int | None:
+    """
+    Na aba DMPL, filtra todas as linhas que contenham 'Aumento de Capital'
+    (ou variações) e soma esses valores (de patrimônio líquido).
+    Insere o total na linha `linha` (sempre como positivo ou fórmula =x+y+...).
+    Retorna o total (int) para adicionar a used_vals.
+    """
+    # 1) identifica coluna de descrição
+    desc_cols = [c for c in df_dm.columns if re.search(r'desc.*conta', c, flags=re.I)]
+    if not desc_cols:
+        return None
+    col_desc = desc_cols[0]
 
+    # 2) identifica coluna de valor de patrimônio
+    val_cols = [c for c in df_dm.columns if re.search(r'patrim[oô]nio.*consolidado', c, flags=re.I)]
+    if not val_cols:
+        val_cols = [c for c in df_dm.columns if re.search(r'patrim[oô]nio.*liquido', c, flags=re.I)]
+    if not val_cols:
+        return None
+    col_valor = val_cols[0]
 
+    # 3) filtra 'Aumento(s) de Capital'
+    mask = df_dm[col_desc].astype(str)\
+               .str.contains(r'aumentos?\s+de\s+capital', case=False, na=False)
+    series = df_dm.loc[mask, col_valor]
+    nums = [normaliza_num(v) for v in series]
+    nums = [n for n in nums if n is not None]
+    if not nums:
+        return None
+
+    # 4) monta soma
+    if len(nums) == 1:
+        total = nums[0]
+        val = total
+    else:
+        terms = "+".join(str(n) for n in nums)
+        total = sum(nums)
+        val = f"={terms}"
+
+    # 5) grava no Spread
+    if is_xlwings:
+        sheet.cells(linha, col_dst_1based).value = val
+    else:
+        sheet.cell(row=linha, column=col_dst_1based, value=val)
+
+    return total
 
 
 def destacar_inseridos(
@@ -577,7 +627,13 @@ def processar(
                     used_vals.add(neg)
                 if pos is not None:
                     used_vals.add(pos)
-
+            
+            # --- insere Aumentos de Capital na linha 214 ---
+            if df_dm is not None:
+                # mesma coluna de destino usada para dividendos
+                col_dm = dst_idx + 1
+                if v214 := inserir_aumentos_capital_dm(df_dm, sht, col_dm, 214, True):
+                    used_vals.add(v214)
 
             # 5) recalcula e salva
             wb.app.calculate()
@@ -614,6 +670,12 @@ def processar(
             used_vals.add(neg)
         if pos is not None:
             used_vals.add(pos)
+
+    # ... depois de inserir_depreciacao_dfc e inserção de dividendos ...
+    if df_dm is not None:
+        col_dm = dst_idx + 1
+        if v214 := inserir_aumentos_capital_dm(df_dm, ws2, col_dm, 214, False):
+            used_vals.add(v214)
 
 
     out_name = f"{spr.stem} {atual}{'.xlsm' if is_xlsm else '.xlsx'}"
