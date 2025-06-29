@@ -19,7 +19,33 @@
 # • Destaque em amarelo para todos os valores que apareceram no Spread
 # • Destaque em azul-claro para novidades (prev=0 → atual≠0)
 # --------------------------------------------------------------------
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Bootstrap de dependências: instala só se não estiver presente
+
 from __future__ import annotations
+
+import importlib, subprocess, sys
+
+def ensure(pkg: str, module: str | None = None) -> None:
+    """
+    Garante que o módulo está importável; se não, instala via pip.
+    - pkg: nome do pacote no PyPI
+    - module: nome do módulo para importar (se diferente de pkg)
+    """
+    module = module or pkg
+    try:
+        importlib.import_module(module)
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+
+# Instalações condicionais
+ensure("pandas", "pandas")
+ensure("openpyxl", "openpyxl")
+ensure("xlwings", "xlwings")
+ensure("customtkinter", "customtkinter")
+
 import logging
 import re
 from pathlib import Path
