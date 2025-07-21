@@ -251,47 +251,60 @@ def atualizar_ws(
     start_row: int,
 ) -> tuple[List[int], Set[int], Set[int]]:
     """
-    Copia e ajusta valores/fórmulas da coluna origem→destino EXCETO
-    nas linhas 199, 209, 210 e 214 (que serão povoadas pelas funções
-    específicas de DFC / DMPL).
-    Retorna (skipped_rows, skipped_vals, used_vals).
+    Copia/ajusta valores/fórmulas da coluna origem→destino, EXCETO
+    nas linhas 199, 209, 210 e 214 (tratadas por DFC/DMPL),
+    e interrompe em 252.
+
+    - Linhas onde a origem normaliza para 0 são puladas (como vazias).
+    - Retira literais '+0' / '-0' de dentro de fórmulas e apaga '=0'.
     """
     c_src, c_dst = src_idx + 1, dst_idx + 1
     delta = c_dst - c_src
+
+    SKIP = {199, 209, 210, 214}
+    END_ROW = 252
+
     skipped_rows: List[int] = []
     skipped_vals: Set[int] = set()
     used_vals: Set[int] = set()
-
-    # linhas que não devem entrar na varredura padrão
-    SKIP = {199, 209, 210, 214}
 
     num_pat = re.compile(r"[-+]?\d[\d\.,]*")
     try:
         max_row = ws.max_row
     except AttributeError:
         max_row = ws.cells.last_cell.row
+    last_row = min(max_row, END_ROW)
 
     empty_streak = 0
     r = start_row
-    while empty_streak < 30 and r <= max_row:
-        # pula as linhas de DFC/DMPL
+    while empty_streak < 30 and r <= last_row:
+        # pula linhas DFC/DMPL
         if r in SKIP:
             r += 1
             continue
 
         v = get_val(r, c_src)
+        # se for zero puro, trata como vazio
+        n0 = normaliza_num(v)
+        if n0 == 0:
+            empty_streak += 1
+            r += 1
+            continue
+
         if v in (None, ""):
             empty_streak += 1
             r += 1
             continue
+
+        # achou algo não-zero
         empty_streak = 0
-
-        wrote = False
         destino = v
+        wrote = False
 
+        # --- lógica original para fórmulas e números não-zero ---
         if isinstance(v, str) and v.startswith("="):
             if not re.search(r"[A-Za-z]", v[1:]):
-                # soma/subtração de literais
+                # literais de soma/subtração
                 def lit_repl(m: re.Match) -> str:
                     tok = m.group(0)
                     n0 = normaliza_num(tok.lstrip("+-"))
@@ -311,6 +324,7 @@ def atualizar_ws(
                 wrote = destino != v
 
         elif (n := normaliza_num(v)) is not None:
+            # só mapeia números não-zero
             novo = valor_corresp(abas, n, ant, atual)
             if novo is not None:
                 destino, wrote = novo, True
@@ -318,6 +332,16 @@ def atualizar_ws(
         else:
             wrote = True
 
+        # --- limpeza de zeros remanescentes em fórmulas ---
+        if isinstance(destino, str) and destino.startswith("="):
+            # tira '+0' / '-0' não ligados a referências
+            destino = re.sub(r'(?<=\D)[+\-]0(?!\d)', "", destino)
+            # se sobrar '=0' ou '=-0', apaga tudo
+            if re.fullmatch(r"=[+\-]?0+", destino):
+                destino = ""
+                wrote = True
+
+        # grava no Spread
         try:
             set_val(r, c_dst, destino)
         except Exception:
@@ -330,6 +354,7 @@ def atualizar_ws(
         r += 1
 
     return skipped_rows, skipped_vals, used_vals
+
 
 
 
