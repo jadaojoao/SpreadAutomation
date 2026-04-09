@@ -52,3 +52,9 @@ If guardrails or apply fail:
 2. restore from backup manifest,
 3. rerun dry-run,
 4. reattempt apply only after conflicts are resolved.
+
+## Validation History
+
+| Date       | Task                                              | Result  | Notes                                       |
+|------------|---------------------------------------------------|---------|---------------------------------------------|
+| 2026-04-09 | #10 First guarded PR flow kickoff (ops-quality)   | pending | First end-to-end guardrail validation cycle |
