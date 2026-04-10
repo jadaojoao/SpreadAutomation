@@ -101,6 +101,7 @@ O usuário já testou pdfplumber diretamente e o resultado não foi satisfatóri
 - Mesmas limitações de pdfplumber para PDFs complexos (multi-coluna, tabelas aninhadas)
 - PDFs escaneados continuam fora do escopo (sem OCR nativo)
 - Pipeline: markitdown → Markdown → parser próprio → FinancialDataSet
+- ADR-011 detalha o recorte de empacotamento e a posição do Docling como fallback futuro, sem substituir esta decisão base
 
 ---
 
@@ -224,6 +225,30 @@ Fuzzy matching textual pode gerar false positives, especialmente em contas com n
 
 ---
 
+## ADR-011: Extrator PDF - MarkItDown primário, Docling fallback futuro
+
+**Data:** 2026-04-10
+**Status:** Aprovado
+
+**Contexto:**
+O projeto precisa de uma camada de extração de PDFs de demonstrações financeiras para os modos 2A e 2B. O extrator precisa funcionar offline, ser empacotável em `.exe` standalone para ambiente corporativo e produzir output suficientemente estruturado para o parser de domínio financeiro. Esta decisão complementa a ADR-004 ao fechar o recorte de empacotamento e evolução futura do extrator.
+
+**Decisão:**
+Usar `markitdown[pdf]` como extrator primário para PDFs nativos. Docling não entra como dependência do `.exe` e fica reservado como fallback futuro para uma versão instalada com Python, se o escopo expandir para documentos fora do fluxo CVM.
+
+**Consequências:**
+- O bundle `.exe` não cresce mais que ~70MB por causa desta dependência
+- PDFs escaneados continuam fora de escopo, em linha com a ADR-009
+- O investimento principal vai para o parser de domínio (`ingestion/pdf/parser.py`), não para o extrator
+- Se MarkItDown produzir menos de 40% de reconhecimento útil em PDFs reais de DFP, a decisão deve ser reavaliada antes da Phase 3
+
+**Alternativas rejeitadas:**
+- Docling como primário: inviável para `.exe` por exigir ~500MB de modelos ONNX e potencial download em runtime
+- `pdfplumber` direto: interface mais complexa para texto corrido e já testada com resultado insatisfatório
+- PyMuPDF (`fitz`): boa alternativa técnica, mas cobre menos casos de uso que MarkItDown e não atende o mesmo escopo de formatos
+
+---
+
 ## Decisões Históricas
 
 Migradas de `MEMORIADASIA.md`. Representam decisões tomadas antes da rearquitetura v2.
@@ -274,4 +299,5 @@ Migradas de `MEMORIADASIA.md`. Representam decisões tomadas antes da rearquitet
 
 | Data | Mudança |
 |------|---------|
-| 2026-04-09 | Criação com 10 ADRs + 6 decisões históricas migradas de MEMORIADASIA.md |
+| 2026-04-10 | Adiciona ADR-011 ao registro canônico de decisões |
+| 2026-04-09 | Criação com 11 ADRs + 6 decisões históricas migradas de MEMORIADASIA.md |
