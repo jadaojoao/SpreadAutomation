@@ -9,7 +9,6 @@ from typing import Callable, List, Set, Tuple
 
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter
 
 from core.utils import XLWINGS, periodos, col_txt_to_idx
 from processing.origin import prepara_origem
@@ -18,32 +17,21 @@ from processing.dre import aplicar_dre_manual
 from processing.dfc import inserir_depreciacao_dfc
 from processing.dmpl import inserir_dividendos_dm, inserir_aumentos_capital_dm
 from processing.highlights import destacar_inseridos, destacar_novos
+from processing.runtime_bridge import (
+    data_columns,
+    next_data_column,
+    special_row,
+    spread_schema,
+    spread_start_row,
+)
 
 if XLWINGS:
     import xlwings as xw
 
 
-# ---------------------------------------------------------------------------
-# Layout fixo de colunas do Spread Proxy
-# ---------------------------------------------------------------------------
-# O Spread usa colunas fixas com separadores ocultos entre elas:
-#   A(1)=oculta  B(2)=rótulos  C(3)=oculta  D(4)=dados  E(5)=oculta(metadados)
-#   F(6)=dados   G(7)=oculta   H(8)=dados   I(9)=oculta  J(10)=dados
-#   K(11)=oculta L(12)=dados(balancete/trimestral)
-#
-# Colunas de dados anuais: D, F, H, J  (índices 4, 6, 8, 10)
-# Coluna de balancete/trimestre: L (índice 12)
-# As colunas ímpares e a A são separadores ocultos.
-
-COLUNAS_ANUAIS = ["D", "F", "H", "J"]       # índices 4, 6, 8, 10
-COLUNA_TRIMESTRAL = "L"                        # índice 12
-COLUNAS_DADOS = COLUNAS_ANUAIS + [COLUNA_TRIMESTRAL]  # D, F, H, J, L
-_COL_INDICES = {c: col_txt_to_idx(c) for c in COLUNAS_DADOS}
-
-
 def detectar_colunas(
     spread_path: Path,
-    start_row: int = 27,
+    start_row: int | None = None,
     trimestral: bool = False,
 ) -> Tuple[str, str]:
     """
@@ -53,16 +41,18 @@ def detectar_colunas(
     Para períodos anuais, busca entre D/F/H/J.
     Para trimestral, a coluna destino é sempre L.
     """
+    schema = spread_schema()
+    row_start = spread_start_row(start_row)
     wb = load_workbook(spread_path, data_only=True)
-    ws = wb["Entrada de Dados"] if "Entrada de Dados" in wb.sheetnames else wb.active
+    ws = wb[schema.sheet_name] if schema.sheet_name in wb.sheetnames else wb.active
 
     # Identifica quais colunas do grid fixo têm dados
-    colunas_grid = COLUNAS_ANUAIS if not trimestral else COLUNAS_DADOS
+    colunas_grid = data_columns(include_quarterly=trimestral)
     ultima_preenchida = None
 
     for col_letter in colunas_grid:
         c = col_txt_to_idx(col_letter) + 1  # openpyxl é 1-based
-        for r in range(start_row, min(start_row + 50, ws.max_row + 1)):
+        for r in range(row_start, min(row_start + 50, ws.max_row + 1)):
             v = ws.cell(r, c).value
             if v is not None and v != "":
                 ultima_preenchida = col_letter
@@ -71,21 +61,15 @@ def detectar_colunas(
     wb.close()
 
     if ultima_preenchida is None:
-        raise ValueError("Spread parece vazio — nenhuma coluna D/F/H/J/L tem dados.")
+        raise ValueError(
+            "Spread parece vazio — nenhuma coluna configurada de dados tem valores."
+        )
 
     # Determina a próxima coluna no grid
     if trimestral:
-        # Para trimestral: fonte = última anual preenchida, destino = L
-        return ultima_preenchida, COLUNA_TRIMESTRAL
+        return ultima_preenchida, schema.columns.quarterly
 
-    # Para anual: próxima coluna no grid D→F→H→J
-    idx = COLUNAS_ANUAIS.index(ultima_preenchida)
-    if idx + 1 >= len(COLUNAS_ANUAIS):
-        raise ValueError(
-            f"Todas as colunas anuais (D/F/H/J) estão preenchidas. "
-            f"Não há espaço para um novo período anual."
-        )
-    return ultima_preenchida, COLUNAS_ANUAIS[idx + 1]
+    return ultima_preenchida, next_data_column(ultima_preenchida)
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +88,8 @@ def _executar_pipeline_openpyxl(
     """Executa o pipeline via openpyxl. Retorna (output_path, used_vals, skipped_rows)."""
     is_xlsm = spr.suffix.lower() == ".xlsm"
     wb = load_workbook(spr, keep_vba=is_xlsm)
-    ws = wb["Entrada de Dados"] if "Entrada de Dados" in wb.sheetnames else wb.active
+    schema = spread_schema()
+    ws = wb[schema.sheet_name] if schema.sheet_name in wb.sheetnames else wb.active
 
     used_vals: Set[int] = set()
 
@@ -120,12 +105,22 @@ def _executar_pipeline_openpyxl(
         aplicar_dre_manual(df_dre, ws, dst_idx + 1, start_row, atual, False)
 
     if df_dfc is not None:
-        if v199 := inserir_depreciacao_dfc(df_dfc, ws, dst_idx + 1, 199, atual, False):
-            used_vals.add(v199)
+        amortizacao_row = special_row("amortizacao_total")
+        if valor := inserir_depreciacao_dfc(
+            df_dfc, ws, dst_idx + 1, amortizacao_row, atual, False
+        ):
+            used_vals.add(valor)
 
     if df_dm is not None:
         col_dm = dst_idx + 1
-        neg, pos = inserir_dividendos_dm(df_dm, ws, col_dm, 210, 209, False)
+        neg, pos = inserir_dividendos_dm(
+            df_dm,
+            ws,
+            col_dm,
+            special_row("dividendos_pagos_negativo"),
+            special_row("dividendos_pagos_positivo"),
+            False,
+        )
         if neg is not None:
             used_vals.add(neg)
         if pos is not None:
@@ -133,8 +128,14 @@ def _executar_pipeline_openpyxl(
 
     if df_dm is not None:
         col_dm = dst_idx + 1
-        if v214 := inserir_aumentos_capital_dm(df_dm, ws, col_dm, 213, False):
-            used_vals.add(v214)
+        if valor := inserir_aumentos_capital_dm(
+            df_dm,
+            ws,
+            col_dm,
+            special_row("reavaliacao_diferido"),
+            False,
+        ):
+            used_vals.add(valor)
 
     out_name = f"{spr.stem} {atual}{'.xlsm' if is_xlsm else '.xlsx'}"
     out_path = spr.with_name(out_name)
@@ -162,8 +163,9 @@ def _executar_pipeline_xlwings(
     else:
         wb = xw.Book(str(spr))
 
+    schema = spread_schema()
     nomes = [s.name for s in wb.sheets]
-    sht = wb.sheets["Entrada de Dados"] if "Entrada de Dados" in nomes else wb.sheets.active
+    sht = wb.sheets[schema.sheet_name] if schema.sheet_name in nomes else wb.sheets.active
 
     get_val = lambda r, c: sht.cells(r, c).formula or sht.cells(r, c).value
 
@@ -183,12 +185,22 @@ def _executar_pipeline_xlwings(
         aplicar_dre_manual(df_dre, sht, dst_idx + 1, start_row, atual, True)
 
     if df_dfc is not None:
-        if v199 := inserir_depreciacao_dfc(df_dfc, sht, dst_idx + 1, 199, atual, True):
-            used_vals.add(v199)
+        amortizacao_row = special_row("amortizacao_total")
+        if valor := inserir_depreciacao_dfc(
+            df_dfc, sht, dst_idx + 1, amortizacao_row, atual, True
+        ):
+            used_vals.add(valor)
 
     if df_dm is not None:
         col_dm = dst_idx + 1
-        neg, pos = inserir_dividendos_dm(df_dm, sht, col_dm, 210, 209, True)
+        neg, pos = inserir_dividendos_dm(
+            df_dm,
+            sht,
+            col_dm,
+            special_row("dividendos_pagos_negativo"),
+            special_row("dividendos_pagos_positivo"),
+            True,
+        )
         if neg is not None:
             used_vals.add(neg)
         if pos is not None:
@@ -196,8 +208,14 @@ def _executar_pipeline_xlwings(
 
     if df_dm is not None:
         col_dm = dst_idx + 1
-        if v214 := inserir_aumentos_capital_dm(df_dm, sht, col_dm, 213, True):
-            used_vals.add(v214)
+        if valor := inserir_aumentos_capital_dm(
+            df_dm,
+            sht,
+            col_dm,
+            special_row("reavaliacao_diferido"),
+            True,
+        ):
+            used_vals.add(valor)
 
     wb.app.calculate()
     wb.save()
@@ -310,7 +328,7 @@ def processar_multi(
     # Período 1: ant (mais antigo dos 2) — src → src+1 no grid fixo D/F/H/J/L
     # col_txt_to_idx é 0-based; get_column_letter é 1-based; o grid pula 1 coluna
     # oculta a cada passo, então o delta real é +3 (0-based +1 para 1-based +2 skip)
-    dst1 = get_column_letter(src_idx + 3)
+    dst1 = next_data_column(src_txt, include_quarterly=is_trim)
     log(f"\n── Período 1/2: {ant} (col {src_txt} → {dst1}) ──")
 
     # Para o primeiro período, precisamos de um período onde ant2 seria o "atual"
@@ -351,7 +369,7 @@ def processar_multi(
     col_atual = src_txt
     for i, per in enumerate(periodos_lista, 1):
         per_atual, per_ant, _, per_is_trim = periodos(per)
-        dst_letter = get_column_letter(col_txt_to_idx(col_atual) + 3)  # 0-based +1 (1-based) +2 (skip oculta) = +3
+        dst_letter = next_data_column(col_atual, include_quarterly=per_is_trim)
         log(f"\n── Período {i}/{len(periodos_lista)}: {per_atual} (col {col_atual} → {dst_letter}) ──")
         resultado = processar(
             ori=ori, spr=resultado, tipo=tipo, periodo=per,

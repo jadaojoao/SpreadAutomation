@@ -7,9 +7,9 @@
 #   na coluna `ant` da Origem, retorna o valor correspondente em `atual`. Comportamento
 #   original. Pode ter falsos positivos quando valores coincidem entre contas distintas.
 #
-# Camada 1 (código CVM, fallback): lê o rótulo da col B, busca o CD_CONTA em CONTA_SPREAD_MAP,
-#   soma os valores da coluna `atual` nas abas da Origem. Determinístico, sem ambiguidade.
-#   Fonte: Plano de Contas Fixas DFP–ENET + validação empírica.
+# Camada 1 (código CVM, fallback): lê o rótulo configurado no SpreadSchema,
+#   resolve os CD_CONTA via MappingRegistry e soma os valores da coluna `atual`
+#   nas abas da Origem. Determinístico, sem ambiguidade.
 
 from __future__ import annotations
 
@@ -21,7 +21,12 @@ import pandas as pd
 from openpyxl import load_workbook
 
 from core.utils import normaliza_num, adjust_complex_formula, shift_formula
-from core.conta_map import CONTA_SPREAD_MAP
+from processing.runtime_bridge import (
+    label_column_1based,
+    layer1_codes_for_label,
+    skip_rows,
+    spread_sheet_name,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -49,17 +54,15 @@ def valor_corresp_por_conta(
     atual: str,
 ) -> int | None:
     """
-    Dado o rótulo da col B do Spread, busca em CONTA_SPREAD_MAP os CD_CONTA
-    correspondentes e soma os valores da coluna `atual` nas abas da Origem.
+    Dado o rótulo configurado no Spread, resolve os CD_CONTA equivalentes
+    via MappingRegistry e soma os valores da coluna `atual` nas abas da Origem.
 
     Retorna None se:
     - label não está no mapa
     - nenhuma aba tem a coluna 'Codigo Conta'
     - soma resulta em zero (não gravamos zeros via Camada 1 — Camada 2 decide)
     """
-    if not label:
-        return None
-    codes = CONTA_SPREAD_MAP.get(str(label).strip())
+    codes = layer1_codes_for_label(label)
     if not codes:
         return None
     for df in abas.values():
@@ -90,8 +93,7 @@ def atualizar_ws(
 ) -> tuple[List[int], Set[int], Set[int]]:
     """
     Copia e ajusta valores/fórmulas da coluna origem→destino EXCETO
-    nas linhas 199, 209, 210 e 213 (que serão povoadas pelas funções
-    específicas de DFC / DMPL).
+    nas linhas especiais configuradas no SpreadSchema para DFC / DMPL.
     Retorna (skipped_rows, skipped_vals, used_vals).
     """
     c_src, c_dst = src_idx + 1, dst_idx + 1
@@ -99,9 +101,8 @@ def atualizar_ws(
     skipped_rows: List[int] = []
     skipped_vals: Set[int] = set()
     used_vals: Set[int] = set()
-
-    # linhas que não devem entrar na varredura padrão
-    SKIP = {199, 209, 210, 213}
+    label_col = label_column_1based()
+    schema_skip_rows = skip_rows()
 
     num_pat = re.compile(r"[-+]?\d[\d\.,]*")
     try:
@@ -113,7 +114,7 @@ def atualizar_ws(
     r = start_row
     while empty_streak < 30 and r <= max_row:
         # pula as linhas de DFC/DMPL
-        if r in SKIP:
+        if r in schema_skip_rows:
             r += 1
             continue
 
@@ -127,8 +128,7 @@ def atualizar_ws(
         wrote = False
         destino = v
 
-        # rótulo da col B (usado pela Camada 1)
-        label = get_val(r, 2)
+        label = get_val(r, label_col)
 
         if isinstance(v, str) and v.startswith("="):
             if not re.search(r"[A-Za-z]", v[1:]):
@@ -189,7 +189,8 @@ def coletar_vals_do_spread(
     spread_path: Path, dst_idx: int, start_row: int
 ) -> Set[int]:
     wb = load_workbook(spread_path, data_only=True)
-    ws = wb["Entrada de Dados"] if "Entrada de Dados" in wb.sheetnames else wb.active
+    sheet_name = spread_sheet_name()
+    ws = wb[sheet_name] if sheet_name in wb.sheetnames else wb.active
     vals, empty = set(), 0
     r = start_row
     while empty < 30 and r <= ws.max_row:
