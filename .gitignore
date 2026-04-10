@@ -24,6 +24,8 @@ venv/
 
 # Ferramentas locais e backups de governanca
 .claude/
+!.claude/skills/
+!.claude/skills/**
 .governance-bootstrap/
 
 # Arquivos antigos (removidos na reorganização)

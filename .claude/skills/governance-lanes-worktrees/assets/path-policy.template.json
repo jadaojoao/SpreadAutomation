@@ -2,21 +2,27 @@
   "schemaVersion": "2.0.0",
   "strictness": "standard",
   "laneAllowlists": {
-    "app-ui": [
-      "app/**"
+    "frontend": [
+      "apps/web/**",
+      "web/**",
+      "frontend/**"
     ],
-    "engine-finance": [
-      "core/**",
-      "processing/**"
+    "backend": [
+      "apps/api/**",
+      "api/**",
+      "src/**",
+      "backend/**",
+      "services/**",
+      "desktop/**",
+      "dashboard/**",
+      "tests/**"
     ],
     "ops-quality": [
       ".github/**",
-      ".claude/**",
       "docs/**",
       "scripts/**",
-      "*.md",
-      "LICENSE",
-      ".gitignore"
+      "config/**",
+      "*.md"
     ]
   },
   "criticalGroups": [
@@ -25,23 +31,15 @@
       "description": "Shared governance and documentation boundaries",
       "patterns": [
         "AGENTS.md",
+        "CLAUDE.md",
         "README.md",
-        "CONTEXT.md",
-        "MEMORIADASIA.md",
-        "CONTRIBUTING.md",
-        "CHANGELOG.md",
-        "LICENSE",
-        ".gitignore",
-        "requirements.txt",
-        "main.py",
         "docs/**",
-        ".github/**",
-        ".claude/**"
+        ".github/**"
       ],
       "ownerLane": "ops-quality",
       "allowedLanes": [
-        "app-ui",
-        "engine-finance",
+        "frontend",
+        "backend",
         "ops-quality"
       ],
       "minimumRisk": "shared",
@@ -52,19 +50,14 @@
       "name": "critical-bootstrap",
       "description": "Setup and bootstrap-sensitive paths",
       "patterns": [
-        ".github/workflows/**",
-        ".github/guardrails/**",
-        ".github/governance.config.yaml",
-        "scripts/bootstrap-governance.ps1",
-        "scripts/bootstrap-governance.sh",
-        "scripts/worktree_create.ps1",
-        "scripts/worktree_status.ps1",
-        "scripts/worktree_remove.ps1",
-        "scripts/pr_complete.ps1"
+        "scripts/setup_db.py",
+        "scripts/runtime_doctor.py",
+        "scripts/db_portability_smoke.py"
       ],
       "ownerLane": "ops-quality",
       "allowedLanes": [
-        "ops-quality"
+        "ops-quality",
+        "backend"
       ],
       "minimumRisk": "shared",
       "requireDraft": true,
@@ -74,12 +67,11 @@
       "name": "critical-runtime",
       "description": "Core runtime execution paths",
       "patterns": [
-        "core/**",
-        "processing/**"
+        "src/**"
       ],
-      "ownerLane": "engine-finance",
+      "ownerLane": "backend",
       "allowedLanes": [
-        "engine-finance"
+        "backend"
       ],
       "minimumRisk": "shared",
       "requireDraft": true,
@@ -89,13 +81,11 @@
       "name": "critical-contract",
       "description": "Public API and compatibility-sensitive paths",
       "patterns": [
-        "core/conta_map.py",
-        "core/utils.py",
-        "processing/pipeline.py"
+        "apps/api/**"
       ],
-      "ownerLane": "engine-finance",
+      "ownerLane": "backend",
       "allowedLanes": [
-        "engine-finance"
+        "backend"
       ],
       "minimumRisk": "contract-sensitive",
       "requireDraft": true,
@@ -104,13 +94,15 @@
   ],
   "disallowedDomainMixes": [
     {
-      "name": "app-ui-with-engine-runtime",
+      "name": "frontend-with-backend-runtime",
       "left": [
-        "app/**"
+        "apps/web/**"
       ],
       "right": [
-        "core/**",
-        "processing/**"
+        "src/**",
+        "apps/api/**",
+        "desktop/**",
+        "dashboard/**"
       ]
     }
   ]

@@ -1,0 +1,620 @@
+﻿name: PR Issue Guardrails
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  validate-pr-issue-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate branch, issue, lane, write-set, and path policy contracts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const RISK_RANK = {
+              safe: 0,
+              shared: 1,
+              "contract-sensitive": 2,
+            };
+
+            const CLOSE_KEYWORDS = ["Closes", "Fixes", "Resolves"];
+
+            const SECTION_ALIASES = {
+              owner: ["Current owner", "Owner atual"],
+              parentTask: ["Parent task", "Task mae"],
+              requesterLane: ["Requester lane", "Lane solicitante"],
+              lane: ["Official lane", "Lane oficial"],
+              workspace: ["Task workspace", "Workspace da task"],
+              childTasks: ["Child tasks", "Tasks filhas"],
+              writeSet: ["Expected write-set", "Write-set esperado"],
+              consumption: ["Consumption criteria", "Criterio de consumo"],
+              risk: ["Risk classification", "Classificacao de risco"],
+              compatibility: ["Compatibility", "Compatibilidade"],
+            };
+
+            const PARENT_ALLOWED_STATUS = [
+              "status:blocked",
+              "status:awaiting-consumption",
+            ];
+
+            function normalizePath(value) {
+              return (value || "")
+                .replace(/\\/g, "/")
+                .replace(/^\.\//, "")
+                .trim();
+            }
+
+            function extractSection(body, heading) {
+              const lines = (body || "").split(/\r?\n/);
+              let capturing = false;
+              const collected = [];
+
+              for (const line of lines) {
+                if (line.trim() === `## ${heading}`) {
+                  capturing = true;
+                  continue;
+                }
+
+                if (capturing && /^##\s+/.test(line)) {
+                  break;
+                }
+
+                if (capturing) {
+                  collected.push(line);
+                }
+              }
+
+              return collected.join("\n").trim();
+            }
+
+            function extractSectionByAliases(body, aliases) {
+              for (const alias of aliases) {
+                const value = extractSection(body, alias);
+                if (value) {
+                  return value;
+                }
+              }
+              return "";
+            }
+
+            function requireExactlyOnePrefix(labels, prefix, description) {
+              const matches = labels.filter((label) => label.startsWith(prefix));
+              if (matches.length !== 1) {
+                core.setFailed(
+                  `Issue must include exactly one ${description} label. Found: ${matches.join(", ") || "none"}.`,
+                );
+                return false;
+              }
+              return true;
+            }
+
+            function parseListSection(section) {
+              return (section || "")
+                .split(/\r?\n/)
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .map((line) => line.replace(/^[-*]\s*/, ""))
+                .map((line) => line.replace(/`/g, "").trim())
+                .filter(Boolean);
+            }
+
+            function isNotApplicable(value) {
+              return /^(n\/a|na|none|no|nenhuma|nenhum|sem child task|sem task mae)$/i.test(
+                (value || "").trim(),
+              );
+            }
+
+            function parseIssueReference(value) {
+              const match = (value || "").match(/#(\d+)/);
+              return match ? Number(match[1]) : null;
+            }
+
+            function expandBracePatterns(pattern) {
+              const openIndex = pattern.indexOf("{");
+              if (openIndex === -1) {
+                return [pattern];
+              }
+
+              let depth = 0;
+              let closeIndex = -1;
+              for (let index = openIndex; index < pattern.length; index += 1) {
+                const current = pattern[index];
+                if (current === "{") {
+                  depth += 1;
+                } else if (current === "}") {
+                  depth -= 1;
+                  if (depth === 0) {
+                    closeIndex = index;
+                    break;
+                  }
+                }
+              }
+
+              if (closeIndex === -1) {
+                return [pattern];
+              }
+
+              const before = pattern.slice(0, openIndex);
+              const after = pattern.slice(closeIndex + 1);
+              const inner = pattern.slice(openIndex + 1, closeIndex);
+              const parts = inner.split(",");
+
+              return parts.flatMap((part) =>
+                expandBracePatterns(`${before}${part}${after}`),
+              );
+            }
+
+            function escapeRegexCharacter(character) {
+              return /[|\\{}()[\]^$+?.]/.test(character)
+                ? `\\${character}`
+                : character;
+            }
+
+            function globToRegex(pattern) {
+              const normalized = normalizePath(pattern);
+              let regex = "^";
+
+              for (let index = 0; index < normalized.length; index += 1) {
+                const current = normalized[index];
+                const next = normalized[index + 1];
+
+                if (current === "*" && next === "*") {
+                  regex += ".*";
+                  index += 1;
+                  continue;
+                }
+
+                if (current === "*") {
+                  regex += "[^/]*";
+                  continue;
+                }
+
+                if (current === "?") {
+                  regex += ".";
+                  continue;
+                }
+
+                regex += escapeRegexCharacter(current);
+              }
+
+              regex += "$";
+              return new RegExp(regex);
+            }
+
+            function matchesAnyPattern(file, patterns) {
+              const normalizedFile = normalizePath(file);
+              return (patterns || []).some((pattern) =>
+                expandBracePatterns(pattern).some((expandedPattern) =>
+                  globToRegex(expandedPattern).test(normalizedFile),
+                ),
+              );
+            }
+
+            function highestRisk(left, right) {
+              return RISK_RANK[left] >= RISK_RANK[right] ? left : right;
+            }
+
+            function hasCloseKeyword(body, issueNumber) {
+              const escaped = issueNumber.toString().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              const closePattern = new RegExp(
+                `\\b(?:${CLOSE_KEYWORDS.join("|")})\\s+#${escaped}\\b`,
+                "i",
+              );
+              return closePattern.test(body || "");
+            }
+
+            const branch = context.payload.pull_request.head.ref;
+            const branchMatch = branch.match(/^task\/(\d+)-([a-z0-9][a-z0-9-]*)$/);
+
+            if (!branchMatch) {
+              core.setFailed(`Invalid branch: "${branch}". Use task/<issue-number>-<slug>.`);
+              return;
+            }
+
+            const issueNumber = Number(branchMatch[1]);
+            const branchSlug = branchMatch[2];
+            const prBody = context.payload.pull_request.body || "";
+
+            if (!hasCloseKeyword(prBody, issueNumber)) {
+              core.setFailed(
+                `PR body must include one closure line for #${issueNumber} using: ${CLOSE_KEYWORDS.join(", ")}.`,
+              );
+              return;
+            }
+
+            const { data: issue } = await github.rest.issues.get({
+              ...context.repo,
+              issue_number: issueNumber,
+            });
+
+            if (issue.pull_request) {
+              core.setFailed(
+                `#${issueNumber} is a pull request. Link this PR to a task issue instead.`,
+              );
+              return;
+            }
+
+            if (issue.state !== "open") {
+              core.setFailed(`Issue #${issueNumber} must remain open while the PR is under review.`);
+              return;
+            }
+
+            const labels = issue.labels.map((label) =>
+              typeof label === "string" ? label : label.name,
+            );
+
+            if (!labels.includes("kind:task")) {
+              core.setFailed(
+                `Issue #${issueNumber} must include "kind:task". Epics should not be closed by PR automation.`,
+              );
+              return;
+            }
+
+            if (!requireExactlyOnePrefix(labels, "status:", "status:*")) return;
+            if (!requireExactlyOnePrefix(labels, "priority:", "priority:*")) return;
+            if (!requireExactlyOnePrefix(labels, "area:", "area:*")) return;
+            if (!requireExactlyOnePrefix(labels, "risk:", "risk:*")) return;
+            if (!requireExactlyOnePrefix(labels, "lane:", "lane:*")) return;
+
+            const owner = extractSectionByAliases(issue.body || "", SECTION_ALIASES.owner);
+            const parentTaskSection = extractSectionByAliases(
+              issue.body || "",
+              SECTION_ALIASES.parentTask,
+            );
+            const requesterLane = extractSectionByAliases(
+              issue.body || "",
+              SECTION_ALIASES.requesterLane,
+            )
+              .toLowerCase()
+              .trim();
+            const laneSection = extractSectionByAliases(issue.body || "", SECTION_ALIASES.lane)
+              .toLowerCase()
+              .trim();
+            const workspace = normalizePath(
+              extractSectionByAliases(issue.body || "", SECTION_ALIASES.workspace),
+            );
+            const writeSet = extractSectionByAliases(issue.body || "", SECTION_ALIASES.writeSet);
+            const consumptionCriteria = extractSectionByAliases(
+              issue.body || "",
+              SECTION_ALIASES.consumption,
+            );
+            const risk = extractSectionByAliases(issue.body || "", SECTION_ALIASES.risk)
+              .toLowerCase()
+              .trim();
+
+            if (!owner || /^tbd$/i.test(owner)) {
+              core.setFailed(`Issue #${issueNumber} must declare a concrete current owner.`);
+              return;
+            }
+
+            if (!writeSet) {
+              core.setFailed(`Issue #${issueNumber} must declare an expected write-set.`);
+              return;
+            }
+
+            const acceptedRiskValues = ["safe", "shared", "contract-sensitive"];
+            if (!acceptedRiskValues.includes(risk)) {
+              core.setFailed(
+                `Issue #${issueNumber} risk classification must be one of: ${acceptedRiskValues.join(", ")}.`,
+              );
+              return;
+            }
+
+            const expectedRiskLabel = `risk:${risk}`;
+            if (!labels.includes(expectedRiskLabel)) {
+              core.setFailed(
+                `Issue #${issueNumber} declares risk "${risk}" but does not include label "${expectedRiskLabel}".`,
+              );
+              return;
+            }
+
+            const laneLabel = labels.find((label) => label.startsWith("lane:"));
+            const laneFromLabel = laneLabel.replace(/^lane:/, "").trim().toLowerCase();
+
+            if (laneSection && !isNotApplicable(laneSection) && laneSection !== laneFromLabel) {
+              core.setFailed(
+                `Issue #${issueNumber} lane section "${laneSection}" does not match lane label "${laneFromLabel}".`,
+              );
+              return;
+            }
+
+            if (!workspace || /^tbd/i.test(workspace)) {
+              core.setFailed(`Issue #${issueNumber} must declare a concrete task workspace path.`);
+              return;
+            }
+
+            const hasParentTask = parentTaskSection && !isNotApplicable(parentTaskSection);
+            const requesterLaneProvided = requesterLane && !isNotApplicable(requesterLane);
+            const consumptionCriteriaProvided =
+              consumptionCriteria && !isNotApplicable(consumptionCriteria);
+
+            if (!hasParentTask && (requesterLaneProvided || consumptionCriteriaProvided)) {
+              core.setFailed(
+                `Issue #${issueNumber} can only set requester lane and consumption criteria when parent task is declared.`,
+              );
+              return;
+            }
+
+            if (hasParentTask) {
+              const parentTaskNumber = parseIssueReference(parentTaskSection);
+              if (!parentTaskNumber) {
+                core.setFailed(
+                  `Issue #${issueNumber} parent task must reference a valid issue number (example: #40).`,
+                );
+                return;
+              }
+
+              if (!requesterLaneProvided) {
+                core.setFailed(`Issue #${issueNumber} must declare requester lane for child tasks.`);
+                return;
+              }
+
+              if (requesterLane === laneFromLabel) {
+                core.setFailed(
+                  `Issue #${issueNumber} child task requester lane cannot match its own official lane "${laneFromLabel}".`,
+                );
+                return;
+              }
+
+              if (!consumptionCriteriaProvided) {
+                core.setFailed(`Issue #${issueNumber} must declare consumption criteria for child tasks.`);
+                return;
+              }
+
+              const { data: parentIssue } = await github.rest.issues.get({
+                ...context.repo,
+                issue_number: parentTaskNumber,
+              });
+
+              if (parentIssue.pull_request) {
+                core.setFailed(`Parent issue #${parentTaskNumber} cannot be a pull request.`);
+                return;
+              }
+
+              if (parentIssue.state !== "open") {
+                core.setFailed(
+                  `Parent issue #${parentTaskNumber} must remain open while child task #${issueNumber} exists.`,
+                );
+                return;
+              }
+
+              const parentLabels = parentIssue.labels.map((label) =>
+                typeof label === "string" ? label : label.name,
+              );
+
+              if (!parentLabels.includes("kind:task")) {
+                core.setFailed(`Parent issue #${parentTaskNumber} must include label "kind:task".`);
+                return;
+              }
+
+              if (!requireExactlyOnePrefix(parentLabels, "lane:", "lane:* on parent issue")) {
+                return;
+              }
+
+              const parentLane = extractSectionByAliases(
+                parentIssue.body || "",
+                SECTION_ALIASES.lane,
+              )
+                .toLowerCase()
+                .trim();
+
+              if (parentLane !== requesterLane) {
+                core.setFailed(
+                  `Child issue #${issueNumber} requester lane "${requesterLane}" must match parent issue #${parentTaskNumber} lane "${parentLane}".`,
+                );
+                return;
+              }
+
+              const parentChildrenSection = extractSectionByAliases(
+                parentIssue.body || "",
+                SECTION_ALIASES.childTasks,
+              );
+
+              if (
+                !parentChildrenSection ||
+                isNotApplicable(parentChildrenSection) ||
+                !new RegExp(`(^|\\s|-)#${issueNumber}(\\b|\\s|$)`, "i").test(parentChildrenSection)
+              ) {
+                core.setFailed(
+                  `Parent issue #${parentTaskNumber} must list child task #${issueNumber} in child tasks section.`,
+                );
+                return;
+              }
+
+              const parentStatusLabels = parentLabels.filter((label) => label.startsWith("status:"));
+              if (!parentStatusLabels.some((status) => PARENT_ALLOWED_STATUS.includes(status))) {
+                core.setFailed(
+                  `Parent issue #${parentTaskNumber} must remain in one of: ${PARENT_ALLOWED_STATUS.join(", ")}.`,
+                );
+                return;
+              }
+            }
+
+            const expectedWorkspaceFragment = normalizePath(
+              `.claude/worktrees/${laneFromLabel}/${issueNumber}-${branchSlug}`,
+            );
+            if (!workspace.includes(expectedWorkspaceFragment)) {
+              core.setFailed(
+                `Issue #${issueNumber} workspace should include "${expectedWorkspaceFragment}". Current: "${workspace}".`,
+              );
+              return;
+            }
+
+            const duplicatePrs = await github.paginate(github.rest.pulls.list, {
+              ...context.repo,
+              state: "open",
+              per_page: 100,
+            });
+
+            const conflictingPrs = duplicatePrs.filter((pullRequest) => {
+              if (pullRequest.number === context.payload.pull_request.number) {
+                return false;
+              }
+
+              const sameIssue = hasCloseKeyword(pullRequest.body || "", issueNumber);
+              const sameBranchIssue =
+                typeof pullRequest.head?.ref === "string" &&
+                pullRequest.head.ref.startsWith(`task/${issueNumber}-`);
+
+              return sameIssue || sameBranchIssue;
+            });
+
+            if (conflictingPrs.length > 0) {
+              core.setFailed(
+                `Task #${issueNumber} already has another open PR: ${conflictingPrs
+                  .map((pr) => `#${pr.number}`)
+                  .join(", ")}. Keep one official PR per task.`,
+              );
+              return;
+            }
+
+            const { data: policyFile } = await github.rest.repos.getContent({
+              ...context.repo,
+              path: ".github/guardrails/path-policy.json",
+              ref: context.payload.pull_request.base.sha,
+            });
+
+            const policy = JSON.parse(
+              Buffer.from(policyFile.content, policyFile.encoding).toString("utf8"),
+            );
+
+            const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
+              ...context.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+
+            const filenames = changedFiles.map((file) => normalizePath(file.filename)).filter(Boolean);
+
+            if (filenames.length === 0) {
+              core.setFailed(`PR #${context.payload.pull_request.number} has no changed files.`);
+              return;
+            }
+
+            const writePatterns = parseListSection(writeSet);
+            if (writePatterns.length === 0) {
+              core.setFailed(
+                `Issue #${issueNumber} expected write-set must contain at least one item.`,
+              );
+              return;
+            }
+
+            for (const file of filenames) {
+              if (!matchesAnyPattern(file, writePatterns)) {
+                core.setFailed(
+                  `Changed file "${file}" is not covered by issue #${issueNumber} expected write-set.`,
+                );
+                return;
+              }
+            }
+
+            let minimumRequiredRisk = "safe";
+            let requiresDraft = false;
+            let requiresCompatibility = false;
+
+            for (const file of filenames) {
+              const matchedGroups = (policy.criticalGroups || []).filter((group) =>
+                matchesAnyPattern(file, group.patterns),
+              );
+
+              if (matchedGroups.length > 1) {
+                core.setFailed(
+                  `File "${file}" matched multiple critical groups: ${matchedGroups
+                    .map((group) => group.name)
+                    .join(", ")}. Critical group patterns must not overlap.`,
+                );
+                return;
+              }
+
+              if (matchedGroups.length === 1) {
+                const [group] = matchedGroups;
+
+                if (!group.allowedLanes.includes(laneFromLabel)) {
+                  core.setFailed(
+                    `Lane "${laneFromLabel}" cannot change "${file}". Group "${group.name}" allows: ${group.allowedLanes.join(", ")}.`,
+                  );
+                  return;
+                }
+
+                minimumRequiredRisk = highestRisk(minimumRequiredRisk, group.minimumRisk);
+                requiresDraft = requiresDraft || !!group.requireDraft;
+                requiresCompatibility = requiresCompatibility || !!group.requireCompatibility;
+                continue;
+              }
+
+              const allowedLanes = Object.entries(policy.laneAllowlists || {})
+                .filter(([, patterns]) => matchesAnyPattern(file, patterns))
+                .map(([lane]) => lane);
+
+              if (allowedLanes.length === 0) {
+                core.setFailed(
+                  `File "${file}" is not classified in .github/guardrails/path-policy.json. Classify path before updating PR.`,
+                );
+                return;
+              }
+
+              if (!allowedLanes.includes(laneFromLabel)) {
+                core.setFailed(
+                  `Lane "${laneFromLabel}" does not cover file "${file}". Allowed lanes: ${allowedLanes.join(", ")}.`,
+                );
+                return;
+              }
+            }
+
+            if (RISK_RANK[risk] < RISK_RANK[minimumRequiredRisk]) {
+              core.setFailed(
+                `Issue #${issueNumber} risk "${risk}" is lower than required minimum "${minimumRequiredRisk}" for changed paths.`,
+              );
+              return;
+            }
+
+            for (const mix of policy.disallowedDomainMixes || []) {
+              const leftTouched = filenames.some((file) => matchesAnyPattern(file, mix.left));
+              const rightTouched = filenames.some((file) => matchesAnyPattern(file, mix.right));
+
+              if (leftTouched && rightTouched) {
+                core.setFailed(
+                  `PR violates disallowed domain mix "${mix.name}". Split work into lane-specific tasks/PRs.`,
+                );
+                return;
+              }
+            }
+
+            if (
+              ["opened", "reopened"].includes(context.payload.action) &&
+              requiresDraft &&
+              !context.payload.pull_request.draft
+            ) {
+              core.setFailed(`PR touching critical/shared paths must open as draft.`);
+              return;
+            }
+
+            if (requiresCompatibility) {
+              const compatibility = extractSectionByAliases(
+                prBody,
+                SECTION_ALIASES.compatibility,
+              );
+              const hasPolicy =
+                compatibility.includes("additive-only") ||
+                compatibility.includes("breaking-approved");
+
+              if (!hasPolicy) {
+                core.setFailed(
+                  `PR touching contract-sensitive paths must declare compatibility policy in a compatibility section.`,
+                );
+                return;
+              }
+            }
+
+            core.info("PR and issue contracts validated successfully.");

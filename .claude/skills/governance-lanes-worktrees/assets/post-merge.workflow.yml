@@ -1,0 +1,79 @@
+name: Post Merge — Close Linked Issue
+
+# Triggered when any PR is closed. If it was merged (not just closed),
+# finds the linked issue via "Closes #N" / "Fixes #N" / "Resolves #N" in the PR body,
+# closes it, swaps status label to status:completed, and adds a completion comment.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  issues: write
+  pull-requests: read
+
+jobs:
+  close-linked-issue:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+    steps:
+      - name: Close linked issue and mark as completed
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || '';
+            const prNumber = context.payload.pull_request.number;
+
+            // Support "Closes #N", "Fixes #N", "Resolves #N" (case-insensitive)
+            const match = body.match(/(?:Closes|Fixes|Resolves)\s+#(\d+)/i);
+            if (!match) {
+              core.info('No linked issue keyword found in PR body. Skipping.');
+              return;
+            }
+
+            const issueNumber = parseInt(match[1]);
+            core.info(`Linked issue: #${issueNumber}`);
+
+            const issue = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+            });
+
+            if (issue.data.state === 'closed') {
+              core.info(`Issue #${issueNumber} is already closed. Skipping.`);
+              return;
+            }
+
+            // Swap status label: remove all status:* labels, add status:completed
+            const currentLabels = issue.data.labels.map(l => l.name);
+            const updatedLabels = [
+              ...currentLabels.filter(l => !l.startsWith('status:')),
+              'status:completed',
+            ];
+
+            await github.rest.issues.setLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              labels: updatedLabels,
+            });
+            core.info(`Labels updated: ${updatedLabels.join(', ')}`);
+
+            // Comment confirming completion
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: `Task completed. Merged in PR #${prNumber}.`,
+            });
+
+            // Close the issue
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              state: 'closed',
+              state_reason: 'completed',
+            });
+
+            core.info(`Issue #${issueNumber} closed and marked status:completed.`);

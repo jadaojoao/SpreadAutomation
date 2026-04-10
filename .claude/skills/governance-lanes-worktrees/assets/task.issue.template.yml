@@ -1,0 +1,145 @@
+name: Task
+description: Executable task with lane, risk, workspace, and write-set contract
+title: "[Task] "
+labels:
+  - kind:task
+  - status:ready
+  - priority:p1
+  - area:docs
+  - risk:safe
+  - lane:ops-quality
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for executable tasks.
+
+        Notes:
+        - Keep one lane per task.
+        - Use child tasks for cross-lane write-set changes.
+        - Keep workspace path aligned with the configured worktree pattern.
+
+  - type: input
+    id: epic-parent
+    attributes:
+      label: Epic parent
+      description: Reference parent epic when applicable (example #12)
+      placeholder: "#12 or n/a"
+    validations:
+      required: true
+
+  - type: input
+    id: parent-task
+    attributes:
+      label: Parent task
+      description: For child tasks only. Alias accepted by guardrails: Task mae
+      placeholder: "#40 or n/a"
+    validations:
+      required: true
+
+  - type: input
+    id: current-owner
+    attributes:
+      label: Current owner
+      description: Person or agent currently responsible. Alias: Owner atual
+      placeholder: "name or agent id"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: official-lane
+    attributes:
+      label: Official lane
+      description: Alias accepted by guardrails: Lane oficial
+      options:
+        - frontend
+        - backend
+        - ops-quality
+    validations:
+      required: true
+
+  - type: dropdown
+    id: requester-lane
+    attributes:
+      label: Requester lane
+      description: Required only for child tasks. Alias: Lane solicitante
+      options:
+        - n/a
+        - frontend
+        - backend
+        - ops-quality
+    validations:
+      required: true
+
+  - type: input
+    id: task-workspace
+    attributes:
+      label: Task workspace
+      description: Must match configured pattern (default .claude/worktrees/<lane>/<issue-number>-<slug>/). Alias: Workspace da task
+      placeholder: .claude/worktrees/ops-quality/27-example-task/
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-write-set
+    attributes:
+      label: Expected write-set
+      description: List files or globs this task is allowed to change. Alias: Write-set esperado
+      placeholder: |
+        - docs/**
+        - .github/**
+        - scripts/worktree_*.ps1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: risk-classification
+    attributes:
+      label: Risk classification
+      description: Alias accepted by guardrails: Classificacao de risco
+      options:
+        - safe
+        - shared
+        - contract-sensitive
+    validations:
+      required: true
+
+  - type: textarea
+    id: child-tasks
+    attributes:
+      label: Child tasks
+      description: List child issues or write n/a. Alias: Tasks filhas
+      placeholder: |
+        - #81 backend child task
+        - #82 docs child task
+    validations:
+      required: true
+
+  - type: textarea
+    id: consumption-criteria
+    attributes:
+      label: Consumption criteria
+      description: Required for child tasks. Alias: Criterio de consumo
+      placeholder: What the requesting lane must validate before unblocking
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Alias accepted by localized templates: Contexto
+      placeholder: What problem this task solves and why now
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: Alias accepted by localized templates: Criterios de aceite
+      placeholder: |
+        - [ ] Behavior one
+        - [ ] Behavior two
+    validations:
+      required: true

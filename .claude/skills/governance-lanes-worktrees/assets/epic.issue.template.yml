@@ -1,0 +1,80 @@
+name: Epic
+description: Planning umbrella that organizes multiple task issues
+title: "[Epic] "
+labels:
+  - kind:epic
+  - status:ready
+  - priority:p1
+  - area:docs
+  - lane:ops-quality
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for strategic work that will be split into task issues.
+
+        Notes:
+        - Epics are planning containers and should not be closed directly by PR automation.
+        - Child tasks should carry full execution metadata and write-set contracts.
+
+  - type: dropdown
+    id: official-lane
+    attributes:
+      label: Official lane
+      description: Primary lane driving this epic roadmap
+      options:
+        - frontend
+        - backend
+        - ops-quality
+    validations:
+      required: true
+
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      placeholder: What business or technical outcome this epic should achieve
+    validations:
+      required: true
+
+  - type: textarea
+    id: done-definition
+    attributes:
+      label: Definition of done
+      placeholder: Observable completion criteria
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope-boundaries
+    attributes:
+      label: Scope boundaries
+      placeholder: What is included and excluded in this epic
+    validations:
+      required: true
+
+  - type: textarea
+    id: task-breakdown
+    attributes:
+      label: Planned tasks
+      placeholder: |
+        - [ ] #TBD task one
+        - [ ] #TBD task two
+    validations:
+      required: true
+
+  - type: textarea
+    id: risk-notes
+    attributes:
+      label: Risk notes
+      placeholder: Main delivery risks and mitigations
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence-plan
+    attributes:
+      label: Evidence plan
+      placeholder: Tests, checks, and artifacts that will prove completion
+    validations:
+      required: true

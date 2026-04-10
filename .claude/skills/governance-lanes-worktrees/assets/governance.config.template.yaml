@@ -1,0 +1,382 @@
+version: "2.0.0"
+platform: "github"
+locale: "en"
+
+discovery:
+  required: true
+  scan_github_issues: true
+  scan_github_prs: true
+  scan_github_artifacts: true
+  scan_docs: true
+  scan_repo_tree: true
+  required_paths:
+    - ".github/**"
+    - "docs/**"
+    - "README.md"
+  block_apply_if_incomplete: true
+
+autonomy:
+  mode: "conservative"
+  require_confirm_for_apply: true
+  require_confirm_for_merge: true
+  require_confirm_for_force_remove: true
+  allow_auto_branch_delete: true
+
+lanes:
+  - id: "frontend"
+    display_name: "Frontend"
+    description: "Owns user-facing web and UI paths"
+    ownership_patterns:
+      - "apps/web/**"
+      - "web/**"
+      - "frontend/**"
+      - "ui/**"
+    allow_shared_governance: true
+    allow_critical_groups:
+      - "shared-governance"
+  - id: "backend"
+    display_name: "Backend"
+    description: "Owns API, runtime, data-processing, and test paths"
+    ownership_patterns:
+      - "apps/api/**"
+      - "api/**"
+      - "src/**"
+      - "backend/**"
+      - "services/**"
+      - "desktop/**"
+      - "dashboard/**"
+      - "tests/**"
+    allow_shared_governance: true
+    allow_critical_groups:
+      - "shared-governance"
+      - "critical-runtime"
+      - "critical-contract"
+  - id: "ops-quality"
+    display_name: "Ops and Quality"
+    description: "Owns CI/CD, docs, scripts, and governance assets"
+    ownership_patterns:
+      - ".github/**"
+      - "docs/**"
+      - "scripts/**"
+      - "config/**"
+      - "*.md"
+    allow_shared_governance: true
+    allow_critical_groups:
+      - "shared-governance"
+      - "critical-bootstrap"
+
+labels:
+  lane_prefix: "lane:"
+  kind_options:
+    - "kind:task"
+    - "kind:epic"
+  status_options:
+    - "status:ready"
+    - "status:in-progress"
+    - "status:blocked"
+    - "status:awaiting-consumption"
+    - "status:completed"
+  status_blocked: "status:blocked"
+  status_awaiting_consumption: "status:awaiting-consumption"
+  priority_options:
+    - "priority:p0"
+    - "priority:p1"
+    - "priority:p2"
+    - "priority:p3"
+  area_options:
+    - "area:web"
+    - "area:api"
+    - "area:core"
+    - "area:data"
+    - "area:infra"
+    - "area:docs"
+  risk_options:
+    - "risk:safe"
+    - "risk:shared"
+    - "risk:contract-sensitive"
+
+risk_model:
+  ordered_levels:
+    - "safe"
+    - "shared"
+    - "contract-sensitive"
+  default_for_normal_changes: "safe"
+  minimum_for_critical:
+    shared-governance: "shared"
+    critical-bootstrap: "shared"
+    critical-runtime: "shared"
+    critical-contract: "contract-sensitive"
+
+issue_contract:
+  required_labels:
+    - "kind:task"
+    - "status:*"
+    - "priority:*"
+    - "area:*"
+    - "risk:*"
+    - "lane:*"
+  required_sections:
+    - "Current owner"
+    - "Official lane"
+    - "Task workspace"
+    - "Expected write-set"
+    - "Risk classification"
+  section_aliases:
+    owner:
+      - "Current owner"
+      - "Owner atual"
+    lane:
+      - "Official lane"
+      - "Lane oficial"
+    workspace:
+      - "Task workspace"
+      - "Workspace da task"
+    write_set:
+      - "Expected write-set"
+      - "Write-set esperado"
+    risk:
+      - "Risk classification"
+      - "Classificacao de risco"
+    parent_task:
+      - "Parent task"
+      - "Task mae"
+    requester_lane:
+      - "Requester lane"
+      - "Lane solicitante"
+    child_tasks:
+      - "Child tasks"
+      - "Tasks filhas"
+    consumption:
+      - "Consumption criteria"
+      - "Criterio de consumo"
+  closes_keywords:
+    - "Closes"
+    - "Fixes"
+    - "Resolves"
+  linked_issue_pattern: "(?im)\\b(?:Closes|Fixes|Resolves)\\s+#(\\d+)\\b"
+  require_write_set: true
+  require_workspace_path: true
+  workspace_path_pattern: ".claude/worktrees/<lane>/<issue-number>-<slug>/"
+  allow_epic_close_by_pr: false
+
+pull_request_contract:
+  required_sections:
+    - "Summary"
+    - "Linked task"
+    - "Governance metadata"
+    - "Validation"
+  section_aliases:
+    compatibility:
+      - "Compatibility"
+      - "Compatibilidade"
+  require_compatibility_for_groups:
+    - "critical-contract"
+  compatibility_values:
+    - "additive-only"
+    - "breaking-approved"
+  default_merge_method: "squash"
+  required_checks_mode: "required"
+  poll_seconds: 10
+  timeout_seconds: 1800
+  requires_issue_closure_line: true
+
+worktree:
+  root: ".claude/worktrees"
+  branch_pattern: "task/<issue-number>-<slug>"
+  worktree_pattern: ".claude/worktrees/<lane>/<issue-number>-<slug>/"
+  base_branch_mode: "auto-detect"
+  base_branch: "master"
+  remove_requires_merged: true
+
+child_tasks:
+  enabled: true
+  require_parent_reference: true
+  require_requester_lane: true
+  require_consumption_criteria: true
+  parent_required_status:
+    - "status:blocked"
+    - "status:awaiting-consumption"
+  requester_must_match_parent_lane: true
+  require_parent_lists_child: true
+
+path_policy:
+  policy_file: ".github/guardrails/path-policy.json"
+  lane_allowlists:
+    frontend:
+      - "apps/web/**"
+      - "web/**"
+      - "frontend/**"
+    backend:
+      - "apps/api/**"
+      - "api/**"
+      - "src/**"
+      - "desktop/**"
+      - "dashboard/**"
+      - "tests/**"
+    ops-quality:
+      - ".github/**"
+      - "docs/**"
+      - "scripts/**"
+      - "config/**"
+      - "*.md"
+  critical_groups:
+    - name: "shared-governance"
+      patterns:
+        - "AGENTS.md"
+        - "CLAUDE.md"
+        - "README.md"
+        - "docs/**"
+        - ".github/**"
+      owner_lane: "ops-quality"
+      allowed_lanes:
+        - "frontend"
+        - "backend"
+        - "ops-quality"
+      minimum_risk: "shared"
+      require_draft: true
+      require_compatibility: false
+    - name: "critical-bootstrap"
+      patterns:
+        - "scripts/setup_db.py"
+        - "scripts/runtime_doctor.py"
+        - "scripts/db_portability_smoke.py"
+      owner_lane: "ops-quality"
+      allowed_lanes:
+        - "ops-quality"
+        - "backend"
+      minimum_risk: "shared"
+      require_draft: true
+      require_compatibility: false
+    - name: "critical-runtime"
+      patterns:
+        - "src/**"
+      owner_lane: "backend"
+      allowed_lanes:
+        - "backend"
+      minimum_risk: "shared"
+      require_draft: true
+      require_compatibility: false
+    - name: "critical-contract"
+      patterns:
+        - "apps/api/**"
+      owner_lane: "backend"
+      allowed_lanes:
+        - "backend"
+      minimum_risk: "contract-sensitive"
+      require_draft: true
+      require_compatibility: true
+  disallowed_domain_mixes:
+    - name: "frontend-with-backend-runtime"
+      left:
+        - "apps/web/**"
+      right:
+        - "src/**"
+        - "apps/api/**"
+        - "desktop/**"
+        - "dashboard/**"
+
+guardrails:
+  workflow_file: ".github/workflows/pr-issue-guardrails.yml"
+  fail_on_unclassified_paths: true
+  enforce_one_pr_per_task: true
+  enforce_branch_issue_match: true
+  enforce_label_uniqueness: true
+  enforce_write_set_coverage: true
+  enforce_child_task_rules: true
+
+git_configuration:
+  enabled: true
+  mode: "conservative"
+  apply_scopes:
+    global: false
+    repo_local: true
+    worktree_local: false
+  repo_local_defaults:
+    fetch.prune: "true"
+    pull.rebase: "true"
+    rebase.autostash: "true"
+    push.default: "simple"
+    core.safecrlf: "true"
+  global_defaults:
+    init.defaultBranch: "master"
+    push.default: "simple"
+  os_defaults:
+    windows:
+      core.autocrlf: "true"
+    linux:
+      core.autocrlf: "input"
+    macos:
+      core.autocrlf: "input"
+  profiles:
+    conservative:
+      pull.rebase: "true"
+      fetch.prune: "true"
+      rebase.autostash: "true"
+      core.safecrlf: "true"
+      push.default: "simple"
+    strict:
+      pull.rebase: "true"
+      fetch.prune: "true"
+      rebase.autostash: "true"
+      core.safecrlf: "true"
+      merge.ff: "false"
+      push.default: "simple"
+  profile_by_lane:
+    frontend: "conservative"
+    backend: "conservative"
+    ops-quality: "strict"
+  protected_settings:
+    - "user.name"
+    - "user.email"
+    - "credential.helper"
+    - "commit.gpgsign"
+    - "core.sshCommand"
+    - "merge.ff"
+  require_confirmation_for:
+    - "global"
+    - "protected"
+    - "strict_profile"
+  validation_rules:
+    - name: "push-default-safe"
+      key: "push.default"
+      allowed_values:
+        - "simple"
+        - "current"
+    - name: "safecrlf-not-false"
+      key: "core.safecrlf"
+      denied_values:
+        - "false"
+
+bootstrap:
+  default_mode: "dry-run"
+  overwrite_policy: "preserve"
+  backup_dir: ".governance-bootstrap/backups"
+  create_backup_manifest: true
+  rollback_on_failure: true
+  preflight_required_tools:
+    - "git"
+  shell_support:
+    - "powershell"
+    - "bash"
+
+localization:
+  default_locale: "en"
+  supported_locales:
+    - "en"
+    - "pt-BR"
+
+artifacts:
+  issue_template_task: ".github/ISSUE_TEMPLATE/task.yml"
+  issue_template_epic: ".github/ISSUE_TEMPLATE/epic.yml"
+  issue_template_config: ".github/ISSUE_TEMPLATE/config.yml"
+  pull_request_template: ".github/PULL_REQUEST_TEMPLATE.md"
+  guardrails_workflow: ".github/workflows/pr-issue-guardrails.yml"
+  path_policy_file: ".github/guardrails/path-policy.json"
+  governance_doc: "docs/governance/parallel-lanes.md"
+  operators_runbook: "docs/governance/operators-runbook.md"
+  rollback_doc: "docs/governance/rollback-recovery.md"
+  root_contract: "AGENTS.md"
+  worktree_create_script: "scripts/worktree_create.ps1"
+  worktree_status_script: "scripts/worktree_status.ps1"
+  worktree_remove_script: "scripts/worktree_remove.ps1"
+  pr_complete_script: "scripts/pr_complete.ps1"
