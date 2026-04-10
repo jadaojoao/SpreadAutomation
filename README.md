@@ -100,10 +100,28 @@ edite apenas `DRE_SPREAD_MAP` em `core/utils.py`.
 - Histórico de mudanças: `CHANGELOG.md`
 - Licença: `LICENSE`
 
-## Referências de Projeto
+## Documentacao do Projeto
 
-- Contexto técnico e arquitetura: `CONTEXT.md`
-- Memória de decisões e validações: `MEMORIADASIA.md`
+O projeto possui documentacao completa em [`docs/PROJECT_MASTER.md`](docs/PROJECT_MASTER.md) — documento mestre que serve como fonte central de verdade e indice para todos os documentos satelite.
+
+| Documento | Conteudo |
+|-----------|----------|
+| [Visao do Produto](docs/product/VISION.md) | Objetivos, restricoes, stakeholders |
+| [Decisoes de Arquitetura](docs/architecture/DECISIONS.md) | ADRs — todas as decisoes tecnicas |
+| [Design do Sistema](docs/architecture/SYSTEM_DESIGN.md) | Camadas, modulos, contratos |
+| [Modelo de Dados](docs/architecture/DATA_MODEL.md) | FinancialDataSet, MappingResult, SpreadSchema |
+| [Fluxos de Trabalho](docs/architecture/FLOWS.md) | Diagramas dos modos 1A, 1B, 1C, 2A, 2B |
+| [Estrategia de Mapeamento](docs/architecture/MAPPING_STRATEGY.md) | 3 camadas de matching, scoring |
+| [Layout do Spread](docs/domain/SPREAD_LAYOUT.md) | Estrutura imutavel do Spread Proxy |
+| [Formatos CVM](docs/domain/CVM_DATA_FORMATS.md) | DadosDocumento.xlsx, CSVs CVM |
+| [Plano de Implementacao](docs/implementation/PLAN.md) | Phases 0-5 com entregaveis e gates |
+| [Estrutura de Pastas](docs/implementation/FOLDER_STRUCTURE.md) | Organizacao alvo do codigo |
+| [Empacotamento .exe](docs/implementation/PACKAGING.md) | Estrategia PyInstaller |
+
+### Referencias historicas
+
+- Contexto tecnico legado: `CONTEXT.md`
+- Memoria de decisoes e validacoes: `MEMORIADASIA.md`
 
 ## Governança de Trabalho
 
