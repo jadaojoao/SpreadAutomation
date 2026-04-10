@@ -19,8 +19,14 @@ Before any apply or enforcement changes, review:
 2. Create worktree and task branch.
 3. Implement in dedicated worktree only.
 4. Open one PR with linked issue closure line.
-5. Complete PR after checks are green.
-6. Confirm linked issue closure and cleanup worktree.
+5. While PR is open, keep issue status in-progress and report pending review/approval gates.
+6. Complete PR only after required checks are green and required approvals are done.
+7. Confirm linked issue closure and cleanup worktree before declaring task complete.
+
+## AI Handoff Rule
+- Do not claim done when PR is still open, even if checks are green.
+- Do not claim done when linked issue is still open.
+- If blocked by external reviewer action, hand off with explicit blocker and next owner.
 
 ## Bootstrap Commands
 - PowerShell dry-run:

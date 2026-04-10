@@ -20,8 +20,9 @@ At the start of each executable chat:
 3. Ensure issue body includes owner, lane, workspace, write-set, and risk.
 4. Work in a dedicated worktree and branch.
 5. Open a single official PR with Closes #<issue-number> in the body.
-6. Complete PR only after required checks are green.
-7. Confirm linked issue closure and branch cleanup.
+6. Keep task status in-progress while PR is open or waiting review.
+7. Complete PR only after required checks are green and required approvals are done.
+8. Confirm linked issue closure and branch cleanup before declaring task complete.
 
 ## Branch and worktree
 - Branch pattern: <lane>/<issue-number>-<slug>
@@ -45,6 +46,11 @@ At the start of each executable chat:
 
 ## Completion
 A task is complete only when PR is merged and linked issue is closed.
+
+## AI completion gate
+- Never report task completion while PR is still open.
+- Never finalize a task while the linked issue remains open.
+- If external review or approval is pending, report the pending gate explicitly and keep the task open.
 
 ## Safety constraints
 - Required checks must stay green for merge completion.

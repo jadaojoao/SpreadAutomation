@@ -32,6 +32,8 @@ Define prohibited domain mixes to avoid unsafe cross-domain PRs.
 ## Merge discipline
 Prefer squash merge for short-lived task branches.
 Require green checks and linked issue closure confirmation.
+Do not mark a task as complete while PR is still open.
+For all AI workflows, completion is allowed only after PR merge and linked task issue closure.
 
 ## Safety
 - Never bypass required checks by default.

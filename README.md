@@ -112,6 +112,7 @@ edite apenas `DRE_SPREAD_MAP` em `core/utils.py`.
 - Política de paths e riscos: `.github/guardrails/path-policy.json`
 - Runbook operacional: `docs/governance/operators-runbook.md`
 - Recuperação e rollback: `docs/governance/rollback-recovery.md`
+- Gate de conclusão: tarefa só pode ser dada como concluída após merge do PR e fechamento da issue vinculada.
 
 Scripts úteis:
 - Bootstrap dry-run/apply: `scripts/bootstrap-governance.ps1` e `scripts/bootstrap-governance.sh`
