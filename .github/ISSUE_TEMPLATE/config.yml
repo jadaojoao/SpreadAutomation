@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Governance setup help
-    url: https://github.com
-    about: Replace this placeholder with your internal support channel or playbook URL.
+  - name: Governance guide
+    url: https://github.com/jadaojoao/SpreadAutomation/blob/main/docs/governance/parallel-lanes.md
+    about: Review lane ownership, task contract fields, and status semantics before opening work.

@@ -4,26 +4,28 @@ title: "[Task] "
 labels:
   - kind:task
   - status:ready
-  - priority:p1
-  - area:docs
+  - priority:p2
+  - area:governance
   - risk:safe
   - lane:ops-quality
 body:
   - type: markdown
     attributes:
       value: |
-        Use this template for executable tasks.
+        Use this form for executable work.
 
-        Notes:
-        - Keep one lane per task.
-        - Use child tasks for cross-lane write-set changes.
-        - Keep workspace path aligned with the configured worktree pattern.
+        Before submitting:
+        - One lane per task.
+        - One branch, one worktree, one PR.
+        - Update the auto-applied labels after creation if lane, area, priority, or risk do not match the task.
+        - If the write-set touches shared-governance or other critical paths from `.github/guardrails/path-policy.json`, open the PR as draft.
+        - Use child tasks for cross-lane write access instead of expanding the write-set informally.
 
   - type: input
     id: epic-parent
     attributes:
       label: Epic parent
-      description: Reference parent epic when applicable (example #12)
+      description: Reference a parent epic when applicable. Use n/a for standalone tasks.
       placeholder: "#12 or n/a"
     validations:
       required: true
@@ -32,7 +34,7 @@ body:
     id: parent-task
     attributes:
       label: Parent task
-      description: For child tasks only. Alias accepted by guardrails: Task mae
+      description: "For child tasks only. Use n/a otherwise. Alias accepted by guardrails: Task mae"
       placeholder: "#40 or n/a"
     validations:
       required: true
@@ -41,8 +43,8 @@ body:
     id: current-owner
     attributes:
       label: Current owner
-      description: Person or agent currently responsible. Alias: Owner atual
-      placeholder: "name or agent id"
+      description: "Person or agent currently responsible. Alias: Owner atual"
+      placeholder: "@jadaojoao or agent id"
     validations:
       required: true
 
@@ -50,7 +52,7 @@ body:
     id: official-lane
     attributes:
       label: Official lane
-      description: Alias accepted by guardrails: Lane oficial
+      description: "Must match the `lane:*` label. Alias accepted by guardrails: Lane oficial"
       options:
         - app-ui
         - engine-finance
@@ -62,7 +64,7 @@ body:
     id: requester-lane
     attributes:
       label: Requester lane
-      description: Required only for child tasks. Alias: Lane solicitante
+      description: "Use `n/a` unless this is a child task. Alias: Lane solicitante"
       options:
         - n/a
         - app-ui
@@ -75,8 +77,8 @@ body:
     id: task-workspace
     attributes:
       label: Task workspace
-      description: Must match configured pattern (default .claude/worktrees/<lane>/<issue-number>-<slug>/). Alias: Workspace da task
-      placeholder: .claude/worktrees/ops-quality/27-example-task/
+      description: "Must match `.claude/worktrees/<lane>/<issue-number>-<slug>/`. Alias: Workspace da task"
+      placeholder: .claude/worktrees/ops-quality/38-contributing-templates/
     validations:
       required: true
 
@@ -84,11 +86,11 @@ body:
     id: expected-write-set
     attributes:
       label: Expected write-set
-      description: List files or globs this task is allowed to change. Alias: Write-set esperado
+      description: "List only the files or globs this task is allowed to change. Alias: Write-set esperado"
       placeholder: |
-        - docs/**
-        - .github/**
-        - scripts/worktree_*.ps1
+        CONTRIBUTING.md
+        .github/ISSUE_TEMPLATE/task.yml
+        .github/ISSUE_TEMPLATE/config.yml
     validations:
       required: true
 
@@ -96,7 +98,7 @@ body:
     id: risk-classification
     attributes:
       label: Risk classification
-      description: Alias accepted by guardrails: Classificacao de risco
+      description: "Use `shared` for shared-governance paths and `contract-sensitive` for public contract changes. Alias: Classificacao de risco"
       options:
         - safe
         - shared
@@ -108,10 +110,10 @@ body:
     id: child-tasks
     attributes:
       label: Child tasks
-      description: List child issues or write n/a. Alias: Tasks filhas
+      description: "List child issues or write `n/a`. Alias: Tasks filhas"
       placeholder: |
         - #81 engine-finance child task
-        - #82 docs child task
+        - #82 app-ui child task
     validations:
       required: true
 
@@ -119,8 +121,11 @@ body:
     id: consumption-criteria
     attributes:
       label: Consumption criteria
-      description: Required for child tasks. Alias: Criterio de consumo
-      placeholder: What the requesting lane must validate before unblocking
+      description: "Required for child tasks. Use `n/a` for normal tasks. Alias: Criterio de consumo"
+      placeholder: |
+        n/a
+        or
+        Requester lane confirms the delivered paths, checks, and integration behavior.
     validations:
       required: true
 
@@ -128,8 +133,8 @@ body:
     id: context
     attributes:
       label: Context
-      description: Alias accepted by localized templates: Contexto
-      placeholder: What problem this task solves and why now
+      description: "Alias accepted by localized templates: Contexto"
+      placeholder: Describe the problem, why it matters now, and any governance constraints that shape the solution.
     validations:
       required: true
 
@@ -137,9 +142,10 @@ body:
     id: acceptance-criteria
     attributes:
       label: Acceptance criteria
-      description: Alias accepted by localized templates: Criterios de aceite
+      description: "Alias accepted by localized templates: Criterios de aceite"
       placeholder: |
-        - [ ] Behavior one
-        - [ ] Behavior two
+        - [ ] Branch and worktree follow the configured pattern
+        - [ ] Changed files stay inside the expected write-set
+        - [ ] Required validation evidence is attached
     validations:
       required: true
