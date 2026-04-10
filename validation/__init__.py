@@ -6,10 +6,12 @@ from .validators import (
     ValidationReporter,
     ValidationMatch,
 )
+from .coverage import CoverageValidator
 
 __all__ = [
     "CompletenessValidator",
     "ConsistencyValidator",
     "ValidationReporter",
     "ValidationMatch",
+    "CoverageValidator",
 ]
