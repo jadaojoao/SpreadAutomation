@@ -23,9 +23,19 @@ venv/
 .idea/
 
 # Ferramentas locais e backups de governanca
-.claude/
+.claude/*
 !.claude/skills/
-!.claude/skills/**
+.claude/skills/*
+!.claude/skills/first-message-governance-kickoff/
+!.claude/skills/governance-lanes-worktrees/
+.claude/skills/first-message-governance-kickoff/*
+!.claude/skills/first-message-governance-kickoff/SKILL.md
+.claude/skills/governance-lanes-worktrees/*
+!.claude/skills/governance-lanes-worktrees/SKILL.md
+!.claude/skills/governance-lanes-worktrees/assets/
+.claude/skills/governance-lanes-worktrees/assets/*
+!.claude/skills/governance-lanes-worktrees/assets/auto-merge.workflow.yml
+!.claude/skills/governance-lanes-worktrees/assets/post-merge.workflow.yml
 .governance-bootstrap/
 
 # Arquivos antigos (removidos na reorganização)
