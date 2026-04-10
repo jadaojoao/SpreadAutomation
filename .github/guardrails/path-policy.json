@@ -35,7 +35,8 @@
         "requirements.txt",
         "main.py",
         "docs/**",
-        ".github/**",
+        ".github/ISSUE_TEMPLATE/**",
+        ".github/PULL_REQUEST_TEMPLATE.md",
         ".claude/**"
       ],
       "ownerLane": "ops-quality",
