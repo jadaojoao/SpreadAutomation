@@ -1,0 +1,208 @@
+{
+  "sheet_name": "Entrada de Dados",
+  "data_start_row": 27,
+  "columns": {
+    "label": "B",
+    "period_start": "D",
+    "annual": ["D", "F", "H", "J"],
+    "quarterly": "L",
+    "hidden": ["A", "C", "E", "G", "I", "K"]
+  },
+  "metadata_rows": {
+    "data_periodo": 3,
+    "meses_balanco": 4,
+    "nome_arquivo": 5
+  },
+  "special_rows": {
+    "amortizacao_total": 199,
+    "dividendos_pagos_positivo": 209,
+    "dividendos_pagos_negativo": 210,
+    "reavaliacao_diferido": 213
+  },
+  "skip_rows": [199, 209, 210, 213],
+  "sections": {
+    "BP_ATIVO": {
+      "start_row": 27,
+      "end_row": 92
+    },
+    "BP_PASSIVO": {
+      "start_row": 94,
+      "end_row": 145
+    },
+    "DRE": {
+      "start_row": 148,
+      "end_row": 195
+    },
+    "DFC": {
+      "start_row": 198,
+      "end_row": 205
+    },
+    "DMPL": {
+      "start_row": 208,
+      "end_row": 228
+    }
+  },
+  "rows": {
+    "disponibilidades": {
+      "row": 28,
+      "label": "Disponibilidades",
+      "section": "BP_ATIVO"
+    },
+    "dupls_receber_cp_mn": {
+      "row": 29,
+      "label": "Dupls Receber CP MN",
+      "section": "BP_ATIVO"
+    },
+    "estoques_operacionais_cp_mn": {
+      "row": 32,
+      "label": "Estoques Operacionais CP MN",
+      "section": "BP_ATIVO"
+    },
+    "ativos_biologicos_cp": {
+      "row": null,
+      "label": "Ativos Biológicos CP",
+      "section": "BP_ATIVO"
+    },
+    "impostos_a_recuperar_cp": {
+      "row": 42,
+      "label": "Impostos a Recuperar CP",
+      "section": "BP_ATIVO"
+    },
+    "desp_antecipadas": {
+      "row": 43,
+      "label": "Desp. Antecipadas",
+      "section": "BP_ATIVO"
+    },
+    "disponibilidades_lp": {
+      "row": 56,
+      "label": "Disponibilidades LP",
+      "section": "BP_ATIVO",
+      "duplicates": [219]
+    },
+    "dupls_receber_lp_mn": {
+      "row": 57,
+      "label": "Dupls Receber LP MN",
+      "section": "BP_ATIVO"
+    },
+    "dupls_receber_lp_me": {
+      "row": 58,
+      "label": "Dupls Receber LP ME",
+      "section": "BP_ATIVO"
+    },
+    "credito_tributario_ir_lp": {
+      "row": 67,
+      "label": "Crédito Tributário I.R. LP",
+      "section": "BP_ATIVO"
+    },
+    "c_c_coligadas_rlp_mn": {
+      "row": 68,
+      "label": "C/C Coligadas RLP MN",
+      "section": "BP_ATIVO"
+    },
+    "fornecedores_operac_cp_mn": {
+      "row": 99,
+      "label": "Fornecedores Operac. CP MN",
+      "section": "BP_PASSIVO"
+    },
+    "despesas_provisionadas": {
+      "row": 103,
+      "label": "Despesas Provisionadas",
+      "section": "BP_PASSIVO"
+    },
+    "provisao_ir_cs": {
+      "row": 109,
+      "label": "Provisão IR/CS",
+      "section": "BP_PASSIVO"
+    },
+    "dividendos_a_pagar": {
+      "row": 111,
+      "label": "Dividendos a Pagar",
+      "section": "BP_PASSIVO"
+    },
+    "provisao_ir_cs_lp": {
+      "row": 128,
+      "label": "Provisão IR/CS LP",
+      "section": "BP_PASSIVO"
+    },
+    "participacao_dos_minoritarios": {
+      "row": 136,
+      "label": "Participação dos Minoritários",
+      "section": "BP_PASSIVO"
+    },
+    "vendas_mercado_externo": {
+      "row": 150,
+      "label": "Vendas Mercado Externo",
+      "section": "DRE"
+    },
+    "cmv_total": {
+      "row": 170,
+      "label": "CMV Total",
+      "section": "DRE"
+    },
+    "lucro_bruto": {
+      "row": 171,
+      "label": "Lucro Bruto",
+      "section": "DRE"
+    },
+    "despesas_administrativas": {
+      "row": 172,
+      "label": "Despesas Administrativas",
+      "section": "DRE"
+    },
+    "despesas_de_vendas": {
+      "row": 174,
+      "label": "Despesas de Vendas",
+      "section": "DRE"
+    },
+    "outras_despesas_operacionais": {
+      "row": 175,
+      "label": "Outras Despesas Operacionais",
+      "section": "DRE"
+    },
+    "outras_receitas_operacionais": {
+      "row": 176,
+      "label": "Outras Receitas Operacionais",
+      "section": "DRE"
+    },
+    "despesas_financeiras_caixa": {
+      "row": 178,
+      "label": "Despesas Financeiras Caixa",
+      "section": "DRE"
+    },
+    "receitas_financeiras_caixa": {
+      "row": 179,
+      "label": "Receitas Financeiras Caixa",
+      "section": "DRE"
+    },
+    "equivalencia_patrimonial": {
+      "row": 190,
+      "label": "Equivalência Patrimonial",
+      "section": "DRE"
+    },
+    "imposto_de_renda": {
+      "row": 192,
+      "label": "Imposto de Renda",
+      "section": "DRE"
+    },
+    "amortizacao_total": {
+      "row": 199,
+      "label": "Amortização Total",
+      "section": "DFC"
+    },
+    "dividendos_pagos_positivo": {
+      "row": 209,
+      "label": "Dividendos Pagos ( Res. + P.L.) (-)",
+      "section": "DMPL"
+    },
+    "dividendos_pagos_negativo": {
+      "row": 210,
+      "label": "I.R. no P.L. (-)",
+      "section": "DMPL"
+    },
+    "reavaliacao_diferido": {
+      "row": 213,
+      "label": "Reavaliação / (Reversão) no Diferido",
+      "section": "DMPL"
+    }
+  }
+}
