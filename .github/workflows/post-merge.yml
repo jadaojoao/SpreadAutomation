@@ -39,12 +39,12 @@ jobs:
               issue_number: issueNumber,
             });
 
-            if (issue.data.state === 'closed') {
-              core.info(`Issue #${issueNumber} is already closed. Skipping.`);
-              return;
+            const alreadyClosed = issue.data.state === 'closed';
+            if (alreadyClosed) {
+              core.info(`Issue #${issueNumber} was already closed (likely by GitHub automation).`);
             }
 
-            // Swap status label: remove all status:* labels, add status:completed
+            // Always swap status label regardless of current closed state
             const currentLabels = issue.data.labels.map(l => l.name);
             const updatedLabels = [
               ...currentLabels.filter(l => !l.startsWith('status:')),
@@ -67,13 +67,15 @@ jobs:
               body: `Task completed. Merged in PR #${prNumber}.`,
             });
 
-            // Close the issue
-            await github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issueNumber,
-              state: 'closed',
-              state_reason: 'completed',
-            });
+            // Close the issue only if not already closed
+            if (!alreadyClosed) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+            }
 
             core.info(`Issue #${issueNumber} closed and marked status:completed.`);

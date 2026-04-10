@@ -52,6 +52,7 @@ jobs:
           echo "Merging PR #${{ steps.find-pr.outputs.pr_number }} via squash..."
           gh pr merge "${{ steps.find-pr.outputs.pr_number }}" \
             --squash \
+            --admin \
             --repo "${{ github.repository }}" \
             --delete-branch
           echo "Merge complete."
