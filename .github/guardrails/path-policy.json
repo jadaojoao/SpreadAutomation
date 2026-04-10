@@ -3,11 +3,19 @@
   "strictness": "standard",
   "laneAllowlists": {
     "app-ui": [
-      "app/**"
+      "app/**",
+      "themes/**"
     ],
     "engine-finance": [
       "core/**",
-      "processing/**"
+      "processing/**",
+      "ingestion/**",
+      "mapping/**",
+      "mapping_tables/**",
+      "spread/**",
+      "validation/**",
+      "engine/**",
+      "templates/**"
     ],
     "ops-quality": [
       ".github/**",
@@ -32,6 +40,7 @@
         "CHANGELOG.md",
         "LICENSE",
         ".gitignore",
+        "build.spec",
         "requirements.txt",
         "main.py",
         "docs/**",
@@ -73,10 +82,17 @@
     },
     {
       "name": "critical-runtime",
-      "description": "Core runtime execution paths",
+      "description": "Core runtime, mapping, ingestion, validation, and spread execution paths",
       "patterns": [
         "core/**",
-        "processing/**"
+        "processing/**",
+        "ingestion/**",
+        "mapping/**",
+        "mapping_tables/**",
+        "spread/**",
+        "validation/**",
+        "engine/**",
+        "templates/**"
       ],
       "ownerLane": "engine-finance",
       "allowedLanes": [
@@ -111,7 +127,14 @@
       ],
       "right": [
         "core/**",
-        "processing/**"
+        "processing/**",
+        "ingestion/**",
+        "mapping/**",
+        "mapping_tables/**",
+        "spread/**",
+        "validation/**",
+        "engine/**",
+        "templates/**"
       ]
     }
   ]
