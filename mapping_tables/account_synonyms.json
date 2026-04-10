@@ -1,0 +1,142 @@
+{
+  "ativos_biologicos_cp": [
+    "ativos biologicos cp",
+    "ativo biologico circulante",
+    "rebanho circulante"
+  ],
+  "c_c_coligadas_rlp_mn": [
+    "creditos com coligadas lp",
+    "partes relacionadas lp",
+    "contas correntes com coligadas"
+  ],
+  "cmv_total": [
+    "cmv total",
+    "custo dos bens vendidos",
+    "custo das mercadorias vendidas"
+  ],
+  "credito_tributario_ir_lp": [
+    "credito tributario ir lp",
+    "imposto diferido ativo",
+    "tributos diferidos ativos"
+  ],
+  "desp_antecipadas": [
+    "despesas antecipadas",
+    "despesas pagas antecipadamente",
+    "antecipacoes operacionais"
+  ],
+  "despesas_administrativas": [
+    "despesas administrativas",
+    "despesas gerais e administrativas",
+    "g&a"
+  ],
+  "despesas_de_vendas": [
+    "despesas de vendas",
+    "despesas comerciais",
+    "selling expenses"
+  ],
+  "despesas_financeiras_caixa": [
+    "despesas financeiras",
+    "juros passivos",
+    "resultado financeiro negativo"
+  ],
+  "despesas_provisionadas": [
+    "despesas provisionadas",
+    "obrigacoes trabalhistas",
+    "obrigacoes sociais"
+  ],
+  "disponibilidades": [
+    "disponibilidades",
+    "caixa e equivalentes",
+    "aplicacoes financeiras"
+  ],
+  "disponibilidades_lp": [
+    "disponibilidades lp",
+    "aplicacoes financeiras lp",
+    "caixa e equivalentes lp"
+  ],
+  "dividendos_a_pagar": [
+    "dividendos a pagar",
+    "jcp a pagar",
+    "remuneracao aos acionistas"
+  ],
+  "dupls_receber_cp_mn": [
+    "duplicatas a receber cp",
+    "clientes cp",
+    "contas a receber cp"
+  ],
+  "dupls_receber_lp_me": [
+    "duplicatas a receber lp me",
+    "clientes exterior lp",
+    "contas a receber moeda estrangeira"
+  ],
+  "dupls_receber_lp_mn": [
+    "duplicatas a receber lp",
+    "clientes lp",
+    "contas a receber lp"
+  ],
+  "equivalencia_patrimonial": [
+    "equivalencia patrimonial",
+    "resultado de equivalencia patrimonial",
+    "resultado de coligadas"
+  ],
+  "estoques_operacionais_cp_mn": [
+    "estoques cp",
+    "estoques operacionais",
+    "inventarios"
+  ],
+  "fornecedores_operac_cp_mn": [
+    "fornecedores cp",
+    "fornecedores operacionais",
+    "contas a pagar fornecedores"
+  ],
+  "imposto_de_renda": [
+    "imposto de renda",
+    "ir e cs sobre o lucro",
+    "imposto de renda e contribuicao social"
+  ],
+  "impostos_a_recuperar_cp": [
+    "impostos a recuperar cp",
+    "tributos a recuperar cp",
+    "creditos tributarios cp"
+  ],
+  "lucro_bruto": [
+    "lucro bruto",
+    "resultado bruto",
+    "margem bruta"
+  ],
+  "outras_despesas_operacionais": [
+    "outras despesas operacionais",
+    "perdas por nao recuperabilidade",
+    "outras perdas operacionais"
+  ],
+  "outras_receitas_operacionais": [
+    "outras receitas operacionais",
+    "outras receitas",
+    "ganhos operacionais"
+  ],
+  "participacao_dos_minoritarios": [
+    "participacao dos minoritarios",
+    "participacao de nao controladores",
+    "interesses nao controladores"
+  ],
+  "provisao_ir_cs": [
+    "provisao ir cs",
+    "imposto de renda a pagar",
+    "contribuicao social a pagar"
+  ],
+  "provisao_ir_cs_lp": [
+    "provisao ir cs lp",
+    "tributos diferidos passivos",
+    "imposto diferido passivo"
+  ],
+  "receitas_financeiras_caixa": [
+    "receitas financeiras",
+    "juros ativos",
+    "resultado financeiro positivo"
+  ],
+  "vendas_mercado_externo": [
+    "vendas mercado externo",
+    "receita de venda de bens e servicos",
+    "receita liquida"
+  ]
+}

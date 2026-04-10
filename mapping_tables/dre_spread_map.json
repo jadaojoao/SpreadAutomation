@@ -1,0 +1,14 @@
+{
+  "Receita de Venda de Bens e/ou Serviços": "vendas_mercado_externo",
+  "Custo dos Bens e/ou Serviços Vendidos": "cmv_total",
+  "Resultado Bruto": "lucro_bruto",
+  "Despesas Gerais e Administrativas": "despesas_administrativas",
+  "Despesas com Vendas": "despesas_de_vendas",
+  "Outras Despesas Operacionais": "outras_despesas_operacionais",
+  "Perdas pela Não Recuperabilidade de Ativos": "outras_despesas_operacionais",
+  "Outras Receitas Operacionais": "outras_receitas_operacionais",
+  "Despesas Financeiras": "despesas_financeiras_caixa",
+  "Receitas Financeiras": "receitas_financeiras_caixa",
+  "Resultado de Equivalência Patrimonial": "equivalencia_patrimonial",
+  "Imposto de Renda e Contribuição Social sobre o Lucro": "imposto_de_renda"
+}
